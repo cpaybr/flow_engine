@@ -7,7 +7,8 @@ logging.basicConfig(
     filename='/home/flow_engine/engine.log',
     filemode='a',
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    force=True
 )
 
 def log_event(message, data={}):
@@ -66,9 +67,10 @@ async def process_message(phone: str, campaign_id: str, message: str) -> str:
         if last_q:
             answers[str(last_q["id"])] = message
             save_user_state(phone, campaign_id, last_q["id"], answers)  # Salvar resposta atual
+            log_event("Resposta salva", {"phone": phone, "campaign_id": campaign_id, "question_id": last_q["id"], "answer": message})
             condition_match = None
             for q in questions:
-                if q.get("condition") and q.get("condition") == message:
+                if q.get("condition") and q.get("condition").lower() == message.lower():
                     condition_match = q
                     break
             if condition_match:
