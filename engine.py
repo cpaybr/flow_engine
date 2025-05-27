@@ -32,22 +32,31 @@ async def process_message(phone: str, campaign_id: str, message: str) -> str:
         log_event("Erro ao carregar campanha", {"campaign_id": campaign_id})
         return "Erro ao carregar campanha."
 
-    flow = campaign.get("flow_json")
-    log_event("Conteúdo de flow_json", {"flow": flow})
+    # Tentar flow_json, depois questions_json
+    flow = campaign.get("flow_json") or campaign.get("questions_json")
+    log_event("Conteúdo de flow/questions", {"flow": flow})
 
-    if not flow or not isinstance(flow, dict) or "questions" not in flow:
-        log_event("Campanha sem perguntas definidas", {"campaign_id": campaign_id})
+    if not flow or not isinstance(flow, dict):
+        log_event("Flow/questions inválido", {"campaign_id": campaign_id, "flow": flow})
+        return "Campanha inválida."
+
+    questions = flow.get("questions", [])
+    if not questions or not isinstance(questions, list):
+        log_event("Campanha sem perguntas definidas", {"campaign_id": campaign_id, "questions": questions})
         return "Campanha sem perguntas definidas."
 
-    questions = flow["questions"]
-    user_state = get_user_state(phone, campaign_id)
+    for q in questions:
+        if not all(key in q for key in ["id", "text"]):
+            log_event("Pergunta inválida", {"campaign_id": campaign_id, "question": q})
+            return "Campanha com perguntas mal configuradas."
 
+    user_state = get_user_state(phone, campaign_id)
     current_step = user_state.get("current_step")
     answers = user_state.get("answers", {})
 
     next_question = None
 
-    if not current_step:
+    if not current_step or message.lower() == "participar":
         next_question = questions[0]
     else:
         last_q = next((q for q in questions if str(q["id"]) == str(current_step)), None)
@@ -68,7 +77,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> str:
     if not next_question:
         save_user_state(phone, campaign_id, current_step, answers)
         log_event("Finalizando pesquisa", {"phone": phone, "campaign_id": campaign_id, "answers": answers})
-        return "Obrigado por participar da pesquisa!"
+        return flow.get("outro", "Obrigado por participar da pesquisa!")
 
     save_user_state(phone, campaign_id, next_question["id"], answers)
     log_event("Enviando próxima pergunta", {
