@@ -62,6 +62,8 @@ async def process_message(phone: str, campaign_id: str, message: str) -> str:
 
     if not current_step or message.lower() in ["participar", "começar"]:
         next_question = questions[0]
+        save_user_state(phone, campaign_id, next_question["id"], answers)  # Salvar estado inicial
+        log_event("Estado inicial salvo", {"phone": phone, "campaign_id": campaign_id, "step": next_question["id"]})
     else:
         last_q = next((q for q in questions if str(q["id"]) == str(current_step)), None)
         if last_q:
