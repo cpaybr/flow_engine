@@ -5,6 +5,7 @@ import json
 # Configurar logging estruturado
 logging.basicConfig(
     filename='/home/flow_engine/engine.log',
+    filemode='a',
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
@@ -58,12 +59,13 @@ async def process_message(phone: str, campaign_id: str, message: str) -> str:
 
     next_question = None
 
-    if not current_step or message.lower() == "participar":
+    if not current_step or message.lower() in ["participar", "começar"]:
         next_question = questions[0]
     else:
         last_q = next((q for q in questions if str(q["id"]) == str(current_step)), None)
         if last_q:
             answers[str(last_q["id"])] = message
+            save_user_state(phone, campaign_id, last_q["id"], answers)  # Salvar resposta atual
             condition_match = None
             for q in questions:
                 if q.get("condition") and q.get("condition") == message:
