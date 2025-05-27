@@ -67,8 +67,8 @@ async def process_message(phone: str, campaign_id: str, message: str) -> str:
         if last_q:
             # Validar resposta
             valid_answer = False
+            option_idx = None
             if last_q["type"] == "quick_reply":
-                option_idx = None
                 if message.startswith("opt_"):
                     try:
                         option_idx = int(message.replace("opt_", ""))
@@ -77,9 +77,9 @@ async def process_message(phone: str, campaign_id: str, message: str) -> str:
                     except ValueError:
                         pass
             elif last_q["type"] == "multiple_choice":
-                valid_options = [chr(65 + i) for i in range(len(last_q["options"]))]
-                if message.upper() in valid_options:
-                    option_idx = valid_options.index(message.upper())
+                valid_options = [chr(65 + i).lower() for i in range(len(last_q["options"]))]
+                if message.lower() in valid_options:
+                    option_idx = valid_options.index(message.lower())
                     valid_answer = True
             else:  # open_text ou outros
                 valid_answer = bool(message.strip())
