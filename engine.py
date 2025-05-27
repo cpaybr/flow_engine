@@ -65,20 +65,43 @@ async def process_message(phone: str, campaign_id: str, message: str) -> str:
     else:
         last_q = next((q for q in questions if str(q["id"]) == str(current_step)), None)
         if last_q:
-            answers[str(last_q["id"])] = message
-            save_user_state(phone, campaign_id, last_q["id"], answers)  # Salvar resposta atual
-            log_event("Resposta salva", {"phone": phone, "campaign_id": campaign_id, "question_id": last_q["id"], "answer": message})
-            condition_match = None
-            for q in questions:
-                if q.get("condition") and q.get("condition").lower() == message.lower():
-                    condition_match = q
-                    break
-            if condition_match:
-                next_question = condition_match
+            # Validar resposta
+            valid_answer = False
+            if last_q["type"] == "quick_reply":
+                option_idx = None
+                if message.startswith("opt_"):
+                    try:
+                        option_idx = int(message.replace("opt_", ""))
+                        if 0 <= option_idx < len(last_q["options"]):
+                            valid_answer = True
+                    except ValueError:
+                        pass
+            elif last_q["type"] == "multiple_choice":
+                valid_options = [chr(65 + i) for i in range(len(last_q["options"]))]
+                if message.upper() in valid_options:
+                    option_idx = valid_options.index(message.upper())
+                    valid_answer = True
+            else:  # open_text ou outros
+                valid_answer = bool(message.strip())
+
+            if valid_answer:
+                answers[str(last_q["id"])] = message
+                save_user_state(phone, campaign_id, last_q["id"], answers)
+                log_event("Resposta salva", {"phone": phone, "campaign_id": campaign_id, "question_id": last_q["id"], "answer": message})
+                condition_match = None
+                for q in questions:
+                    if q.get("condition") and q.get("condition").lower() == message.lower():
+                        condition_match = q
+                        break
+                if condition_match:
+                    next_question = condition_match
+                else:
+                    current_idx = questions.index(last_q)
+                    if current_idx + 1 < len(questions):
+                        next_question = questions[current_idx + 1]
             else:
-                current_idx = questions.index(last_q)
-                if current_idx + 1 < len(questions):
-                    next_question = questions[current_idx + 1]
+                log_event("Resposta inválida", {"phone": phone, "campaign_id": campaign_id, "question_id": last_q["id"], "answer": message})
+                return last_q["text"]  # Reenviar mesma pergunta
 
     if not next_question:
         save_user_state(phone, campaign_id, current_step, answers)
