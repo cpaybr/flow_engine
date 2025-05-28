@@ -57,12 +57,12 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             log_event("Início de pesquisa", {"next_question": next_question["text"]})
             return {"next_message": next_question["text"]}
 
-        if answers:
-            ultima_id = max([int(k) for k in answers.keys()])
+        current_question = next((q for q in questions if str(q["id"]) == str(current_step)), None)
+
+        if not current_question and answers:
+            ids_respondidas = sorted([int(k) for k in answers.keys()])
+            ultima_id = ids_respondidas[-1]
             current_question = next((q for q in questions if int(q["id"]) == ultima_id), None)
-            current_step = str(current_question["id"]) if current_question else current_step
-        else:
-            current_question = next((q for q in questions if str(q["id"]) == str(current_step)), None)
 
         if not current_question:
             return {"next_message": "Erro interno: pergunta atual não encontrada."}
