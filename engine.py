@@ -19,6 +19,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
     try:
         log_event("Iniciando processamento", {"phone": phone, "campaign_id": campaign_id, "message": message})
 
+        # Começar com código
         if message.lower().startswith("começar "):
             code = message.split(" ")[1].upper()
             campaign = get_campaign_by_code(code)
@@ -56,6 +57,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
         valid_answer = False
         confirmation_text = ""
         options = current_question.get("options", [])
+        selected = ""
 
         if current_question["type"] in ["quick_reply", "multiple_choice"]:
             letters = [chr(97 + i) for i in range(len(options))]  # a, b, c...
@@ -65,19 +67,24 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                 try:
                     idx = int(message.split("_")[1])
                     if 0 <= idx < len(options):
-                        valid_answer = True
                         selected = options[idx]
+                        valid_answer = True
                 except (ValueError, IndexError):
                     pass
+
             elif message.lower() in letters:
                 idx = letters.index(message.lower())
                 selected = options[idx]
                 valid_answer = True
+
             elif message in numbers:
-                idx = int(message) - 1
-                if 0 <= idx < len(options):
-                    selected = options[idx]
-                    valid_answer = True
+                try:
+                    idx = int(message) - 1
+                    if 0 <= idx < len(options):
+                        selected = options[idx]
+                        valid_answer = True
+                except ValueError:
+                    pass
 
             if valid_answer:
                 answers[str(current_question["id"])] = selected
