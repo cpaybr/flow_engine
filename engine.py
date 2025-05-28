@@ -32,13 +32,18 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
         if not campaign:
             return {"next_message": "Erro ao carregar campanha."}
 
-        flow = campaign.get("flow_json") or campaign.get("questions_json")
-        if not flow or not isinstance(flow, dict):
-            return {"next_message": "Campanha inválida."}
+        # Use apenas um dos fluxos
+        flow = None
+        if campaign.get("flow_json") and campaign.get("flow_json").get("questions"):
+            flow = campaign["flow_json"]
+        elif campaign.get("questions_json") and campaign.get("questions_json").get("questions"):
+            flow = campaign["questions_json"]
+        else:
+            return {"next_message": "Campanha sem perguntas definidas."}
 
         questions = flow.get("questions", [])
         if not questions:
-            return {"next_message": "Campanha sem perguntas definidas."}
+            return {"next_message": "Campanha sem perguntas válidas."}
 
         user_state = get_user_state(phone, campaign_id)
         current_step = user_state.get("current_step")
@@ -51,7 +56,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
 
         current_question = next((q for q in questions if str(q["id"]) == str(current_step)), None)
         if not current_question:
-            return {"next_message": "Ocorreu um erro no processamento."}
+            return {"next_message": "Erro interno: pergunta atual não encontrada."}
 
         valid_answer = False
         confirmation_text = ""
@@ -86,7 +91,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                     if 0 <= idx < len(options):
                         selected = options[idx]
                         valid_answer = True
-                except ValueError:
+                except Exception:
                     pass
 
             if valid_answer:
@@ -112,6 +117,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             else:
                 return {"next_message": current_question["text"]}
 
+        # Definir próxima pergunta
         next_question = None
 
         for q in questions:
@@ -120,9 +126,17 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                 break
 
         if not next_question:
-            current_index = next((i for i, q in enumerate(questions) if str(q["id"]) == str(current_step)), -1)
+            current_index = next((i for i, q in enumerate(questions) if str(q["id"]) == str(current_question["id"])), -1)
             if current_index != -1 and current_index + 1 < len(questions):
                 next_question = questions[current_index + 1]
+
+        # Log antes de salvar estado
+        log_event("Salvando novo passo", {
+            "phone": phone,
+            "campanha": campaign_id,
+            "de": current_step,
+            "para": next_question["id"] if next_question else "fim"
+        })
 
         if next_question:
             save_user_state(phone, campaign_id, next_question["id"], answers)
