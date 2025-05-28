@@ -58,26 +58,29 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
 
         # Processar resposta
         valid_answer = False
-        
+        options = current_question.get("options", [])
+
         if current_question["type"] == "quick_reply":
             if message.startswith("opt_"):
                 try:
                     option_idx = int(message.split("_")[1])
-                    if 0 <= option_idx < len(current_question.get("options", [])):
+                    if 0 <= option_idx < len(options):
                         valid_answer = True
-                        # Salvar o texto da opção, não o opt_X
-                        answers[str(current_question["id"])] = current_question["options"][option_idx]
+                        answers[str(current_question["id"])] = options[option_idx]
                 except (ValueError, IndexError):
                     pass
-                    
+            elif message.lower() in [chr(97 + i) for i in range(len(options))]:  # a, b, c, ...
+                option_idx = [chr(97 + i) for i in range(len(options))].index(message.lower())
+                valid_answer = True
+                answers[str(current_question["id"])] = options[option_idx]
+
         elif current_question["type"] == "multiple_choice":
-            options = current_question.get("options", [])
             valid_options = [chr(97 + i) for i in range(len(options))]  # a, b, c, ...
             if message.lower() in valid_options:
                 option_idx = valid_options.index(message.lower())
                 answers[str(current_question["id"])] = options[option_idx]
                 valid_answer = True
-                
+
         else:  # open_text ou outros
             if message.strip():
                 answers[str(current_question["id"])] = message.strip()
@@ -89,11 +92,18 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                 "question_type": current_question["type"],
                 "answer": message
             })
-            return {"next_message": current_question["text"]}
+
+            # Gera texto de opções, se houver
+            if options:
+                letras = [chr(97 + i) for i in range(len(options))]
+                op_texto = "\n".join([f"{letras[i]}) {opt}" for i, opt in enumerate(options)])
+                return {"next_message": f"Resposta inválida. Escolha uma das opções abaixo:\n{op_texto}"}
+            else:
+                return {"next_message": current_question["text"]}
 
         # Determinar próxima pergunta
         next_question = None
-        
+
         # Verificar condições primeiro
         for q in questions:
             if q.get("condition") and str(q["condition"]).lower() == answers[str(current_question["id"])].lower():
