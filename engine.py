@@ -19,7 +19,6 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
     try:
         log_event("Iniciando processamento", {"phone": phone, "campaign_id": campaign_id, "message": message})
 
-        # Começar com código
         if message.lower().startswith("começar "):
             code = message.split(" ")[1].upper()
             campaign = get_campaign_by_code(code)
@@ -56,8 +55,8 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
 
         valid_answer = False
         confirmation_text = ""
-        options = current_question.get("options", [])
         selected = ""
+        options = current_question.get("options", [])
 
         if current_question["type"] in ["quick_reply", "multiple_choice"]:
             letters = [chr(97 + i) for i in range(len(options))]  # a, b, c...
@@ -73,9 +72,13 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                     pass
 
             elif message.lower() in letters:
-                idx = letters.index(message.lower())
-                selected = options[idx]
-                valid_answer = True
+                try:
+                    idx = letters.index(message.lower())
+                    if 0 <= idx < len(options):
+                        selected = options[idx]
+                        valid_answer = True
+                except Exception:
+                    pass
 
             elif message in numbers:
                 try:
