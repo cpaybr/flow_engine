@@ -103,6 +103,10 @@ async def process_message(phone: str, campaign_id: str, message: str) -> str:
                         next_question = questions[current_idx + 1]
                     else:
                         next_question = None
+                # Salvar próximo estado antes de retornar
+                if next_question:
+                    save_user_state(phone, campaign_id, next_question["id"], answers)
+                    log_event("Próximo estado salvo", {"phone": phone, "campaign_id": campaign_id, "step": next_question["id"]})
             else:
                 log_event("Resposta inválida", {"phone": phone, "campaign_id": campaign_id, "question_id": last_q["id"], "answer": message})
                 return last_q["text"]  # Reenviar mesma pergunta
@@ -112,11 +116,4 @@ async def process_message(phone: str, campaign_id: str, message: str) -> str:
         log_event("Finalizando pesquisa", {"phone": phone, "campaign_id": campaign_id, "answers": answers})
         return flow.get("outro", "Obrigado por participar da pesquisa!")
 
-    save_user_state(phone, campaign_id, next_question["id"], answers)
-    log_event("Enviando próxima pergunta", {
-        "phone": phone,
-        "campaign_id": campaign_id,
-        "question_id": next_question["id"],
-        "question_text": next_question["text"]
-    })
     return next_question["text"]
