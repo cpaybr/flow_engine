@@ -34,7 +34,7 @@ async def process(request: Request):
             return {"detail": "Parâmetros obrigatórios ausentes"}
         response = await process_message(phone, campaign_id, message)
         log_event("Mensagem processada com sucesso", {"phone": phone, "campaign_id": campaign_id, "response": response})
-        return {"next_message": response}
+        return response
     except Exception as e:
         log_event("Erro ao processar requisição", {"error": str(e)})
         return {"detail": f"Erro ao interpretar corpo da requisição: {str(e)}"}
