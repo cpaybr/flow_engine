@@ -2,7 +2,7 @@ from supabase_client import get_campaign, get_user_state, save_user_state, get_c
 import logging
 import json
 
-# Configurar logging
+# Configuração de logs
 logging.basicConfig(
     filename='/home/flow_engine/engine.log',
     filemode='a',
@@ -32,11 +32,10 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
         if not campaign:
             return {"next_message": "Erro ao carregar campanha."}
 
-        # Use apenas um dos fluxos
         flow = None
-        if campaign.get("flow_json") and campaign.get("flow_json").get("questions"):
+        if campaign.get("flow_json") and campaign["flow_json"].get("questions"):
             flow = campaign["flow_json"]
-        elif campaign.get("questions_json") and campaign.get("questions_json").get("questions"):
+        elif campaign.get("questions_json") and campaign["questions_json"].get("questions"):
             flow = campaign["questions_json"]
         else:
             return {"next_message": "Campanha sem perguntas definidas."}
@@ -54,7 +53,14 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             save_user_state(phone, campaign_id, next_question["id"], answers)
             return {"next_message": next_question["text"]}
 
-        current_question = next((q for q in questions if str(q["id"]) == str(current_step)), None)
+        # ⚠️ Corrigido: detectar última pergunta realmente respondida
+        if answers:
+            ultima_id = max([int(k) for k in answers.keys()])
+            current_question = next((q for q in questions if int(q["id"]) == ultima_id), None)
+            current_step = str(current_question["id"]) if current_question else current_step
+        else:
+            current_question = next((q for q in questions if str(q["id"]) == str(current_step)), None)
+
         if not current_question:
             return {"next_message": "Erro interno: pergunta atual não encontrada."}
 
@@ -64,7 +70,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
         options = current_question.get("options", [])
 
         if current_question["type"] in ["quick_reply", "multiple_choice"]:
-            letters = [chr(97 + i) for i in range(len(options))]  # a, b, c...
+            letters = [chr(97 + i) for i in range(len(options))]
             numbers = [str(i + 1) for i in range(len(options))]
 
             if message.startswith("opt_"):
@@ -73,25 +79,23 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                     if 0 <= idx < len(options):
                         selected = options[idx]
                         valid_answer = True
-                except (ValueError, IndexError):
+                except:
                     pass
-
             elif message.lower() in letters:
                 try:
                     idx = letters.index(message.lower())
                     if 0 <= idx < len(options):
                         selected = options[idx]
                         valid_answer = True
-                except Exception:
+                except:
                     pass
-
             elif message in numbers:
                 try:
                     idx = int(message) - 1
                     if 0 <= idx < len(options):
                         selected = options[idx]
                         valid_answer = True
-                except Exception:
+                except:
                     pass
 
             if valid_answer:
@@ -109,7 +113,6 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                 "question_type": current_question["type"],
                 "answer": message
             })
-
             if options:
                 letras = [chr(97 + i) for i in range(len(options))]
                 op_texto = "\n".join([f"{letras[i]}) {opt}" for i, opt in enumerate(options)])
@@ -117,9 +120,8 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             else:
                 return {"next_message": current_question["text"]}
 
-        # Definir próxima pergunta
+        # Determinar próxima pergunta
         next_question = None
-
         for q in questions:
             if q.get("condition") and str(q["condition"]).lower() == answers[str(current_question["id"])].lower():
                 next_question = q
@@ -130,7 +132,6 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             if current_index != -1 and current_index + 1 < len(questions):
                 next_question = questions[current_index + 1]
 
-        # Log antes de salvar estado
         log_event("Salvando novo passo", {
             "phone": phone,
             "campanha": campaign_id,
