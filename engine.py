@@ -1,3 +1,4 @@
+
 from supabase_client import get_campaign, get_user_state, save_user_state, get_campaign_by_code
 import logging
 import json
@@ -48,12 +49,14 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
         current_step = user_state.get("current_step")
         answers = user_state.get("answers", {})
 
+        log_event("Estado do usuário carregado", {"current_step": current_step, "answers": answers})
+
         if not current_step or message.lower() in ["participar", "começar"]:
             next_question = questions[0]
             save_user_state(phone, campaign_id, next_question["id"], answers)
+            log_event("Início de pesquisa", {"next_question": next_question["text"]})
             return {"next_message": next_question["text"]}
 
-        # ⚠️ Corrigido: detectar última pergunta realmente respondida
         if answers:
             ultima_id = max([int(k) for k in answers.keys()])
             current_question = next((q for q in questions if int(q["id"]) == ultima_id), None)
@@ -68,6 +71,8 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
         confirmation_text = ""
         selected = ""
         options = current_question.get("options", [])
+
+        log_event("Processando resposta", {"message": message, "question": current_question})
 
         if current_question["type"] in ["quick_reply", "multiple_choice"]:
             letters = [chr(97 + i) for i in range(len(options))]
@@ -120,7 +125,6 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             else:
                 return {"next_message": current_question["text"]}
 
-        # Determinar próxima pergunta
         next_question = None
         for q in questions:
             if q.get("condition") and str(q["condition"]).lower() == answers[str(current_question["id"])].lower():
@@ -132,10 +136,8 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             if current_index != -1 and current_index + 1 < len(questions):
                 next_question = questions[current_index + 1]
 
-        log_event("Salvando novo passo", {
-            "phone": phone,
-            "campanha": campaign_id,
-            "de": current_step,
+        log_event("Determinado próximo passo", {
+            "de": current_question["id"],
             "para": next_question["id"] if next_question else "fim"
         })
 
