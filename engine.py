@@ -1,3 +1,4 @@
+
 from supabase_client import get_campaign, get_user_state, save_user_state, get_campaign_by_code
 import logging
 import json
@@ -53,7 +54,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             save_user_state(phone, campaign_id, next_question["id"], answers)
             return {"next_message": next_question["text"]}
 
-        # ⚠️ Corrigido: detectar última pergunta realmente respondida
+        # Detectar pergunta atual com base na última resposta
         if answers:
             ultima_id = max([int(k) for k in answers.keys()])
             current_question = next((q for q in questions if int(q["id"]) == ultima_id), None)
@@ -120,17 +121,20 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             else:
                 return {"next_message": current_question["text"]}
 
-        # Determinar próxima pergunta
+        # Determinar próxima pergunta com condition ou ordem
         next_question = None
         for q in questions:
-            if q.get("condition") and str(q["condition"]).lower() == answers[str(current_question["id"])].lower():
+            if q.get("condition") and str(q["condition"]).lower() == answers.get(str(current_question["id"]), "").lower():
                 next_question = q
                 break
 
         if not next_question:
-            current_index = next((i for i, q in enumerate(questions) if str(q["id"]) == str(current_question["id"])), -1)
-            if current_index != -1 and current_index + 1 < len(questions):
-                next_question = questions[current_index + 1]
+            try:
+                current_index = next(i for i, q in enumerate(questions) if str(q["id"]) == str(current_question["id"]))
+                if current_index + 1 < len(questions):
+                    next_question = questions[current_index + 1]
+            except:
+                next_question = None
 
         log_event("Salvando novo passo", {
             "phone": phone,
