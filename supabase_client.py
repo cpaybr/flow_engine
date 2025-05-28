@@ -66,13 +66,18 @@ def save_user_state(phone, campaign_id, step, answers):
     }
     headers = HEADERS.copy()
     headers["Prefer"] = "resolution=merge-duplicates"
-    res = requests.post(url, headers=headers, json=payload)
+    params = {
+        "on_conflict": "phone,campaign_id"
+    }
+    res = requests.post(url, headers=headers, params=params, json=payload)
     success = res.status_code in (200, 201)
     log_event("Salvando estado do usuário", {
         "phone": phone,
         "campaign_id": campaign_id,
         "step": step,
         "answers": answers,
+        "status_code": res.status_code,
+        "response": res.text,
         "success": success
     })
     return success
