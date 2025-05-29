@@ -1,3 +1,4 @@
+
 from supabase_client import get_campaign, get_user_state, save_user_state, get_campaign_by_code
 import logging
 import json
@@ -54,13 +55,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             next_question = questions[0]
             save_user_state(phone, campaign_id, next_question["id"], answers)
             log_event("Início de pesquisa", {"next_question": next_question["text"]})
-            message_text = next_question["text"]
-            if next_question["type"] in ["quick_reply", "multiple_choice"]:
-                options = next_question.get("options", [])
-                if options:
-                    letters = [chr(97 + i) for i in range(len(options))]
-                    message_text += "\n" + "\n".join([f"{letters[i]}) {opt}" for i, opt in enumerate(options)])
-            return {"next_message": message_text}
+            return {"next_message": next_question["text"]}
 
         current_question = next((q for q in questions if str(q["id"]) == str(current_step)), None)
 
@@ -82,7 +77,6 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
         if current_question["type"] in ["quick_reply", "multiple_choice"]:
             letters = [chr(97 + i) for i in range(len(options))]
             numbers = [str(i + 1) for i in range(len(options))]
-            option_map = {opt.lower(): f"opt_{i}" for i, opt in enumerate(options)}  # Mapear texto da opção pra opt_X
 
             if message.startswith("opt_"):
                 try:
@@ -108,11 +102,6 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                         valid_answer = True
                 except:
                     pass
-            elif message.lower() in option_map:
-                message = option_map[message.lower()]  # Converter "Masculino" pra "opt_1"
-                idx = int(message.split("_")[1])
-                selected = options[idx]
-                valid_answer = True
 
             if valid_answer:
                 answers[str(current_question["id"])] = selected
@@ -129,11 +118,12 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                 "question_type": current_question["type"],
                 "answer": message
             })
-            message_text = f"❌ Resposta inválida. Escolha uma das opções abaixo:\n{current_question['text']}"
             if options:
-                letters = [chr(97 + i) for i in range(len(options))]
-                message_text += "\n" + "\n".join([f"{letters[i]}) {opt}" for i, opt in enumerate(options)])
-            return {"next_message": message_text}
+                letras = [chr(97 + i) for i in range(len(options))]
+                op_texto = "\n".join([f"{letras[i]}) {opt}" for i, opt in enumerate(options)])
+                return {"next_message": f"❌ Resposta inválida. Escolha uma das opções abaixo:\n{op_texto}"}
+            else:
+                return {"next_message": current_question["text"]}
 
         next_question = None
         for q in questions:
@@ -153,13 +143,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
 
         if next_question:
             save_user_state(phone, campaign_id, next_question["id"], answers)
-            message_text = f"{confirmation_text}\n\n{next_question['text']}"
-            if next_question["type"] in ["quick_reply", "multiple_choice"]:
-                options = next_question.get("options", [])
-                if options:
-                    letters = [chr(97 + i) for i in range(len(options))]
-                    message_text += "\n" + "\n".join([f"{letters[i]}) {opt}" for i, opt in enumerate(options)])
-            return {"next_message": message_text}
+            return {"next_message": f"{confirmation_text}\n\n{next_question['text']}"}
         else:
             save_user_state(phone, campaign_id, None, answers)
             outro = flow.get("outro", "Obrigado por participar da pesquisa!")
