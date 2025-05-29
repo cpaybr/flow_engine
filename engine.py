@@ -138,16 +138,22 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                 message_text += "\n" + "\n".join([f"{letters[i]}) {opt}" for i, opt in enumerate(options)])
             return {"next_message": message_text}
 
-        next_question = None
-        for q in questions:
-            if q.get("condition") and str(q["condition"]).lower() == answers[str(current_question["id"])].lower():
-                next_question = q
-                break
+        save_user_state(phone, campaign_id, current_question["id"], answers)
+        log_event("Resposta salva", {"phone": phone, "campaign_id": campaign_id, "question_id": current_question["id"], "answer": selected})
 
-        if not next_question:
-            current_index = next((i for i, q in enumerate(questions) if str(q["id"]) == str(current_question["id"])), -1)
-            if current_index != -1 and current_index + 1 < len(questions):
-                next_question = questions[current_index + 1]
+        next_question = None
+        current_index = next((i for i, q in enumerate(questions) if str(q["id"]) == str(current_question["id"])), -1)
+
+        # Primeiro, verifica perguntas com condição que correspondem à resposta atual
+        if valid_answer and current_index != -1:
+            for q in questions[current_index + 1:]:
+                if q.get("condition") and str(q["condition"]).lower() == selected.lower():
+                    next_question = q
+                    break
+
+        # Se não houver pergunta condicional, pega a próxima pergunta na ordem
+        if not next_question and current_index != -1 and current_index + 1 < len(questions):
+            next_question = questions[current_index + 1]
 
         log_event("Determinado próximo passo", {
             "de": current_question["id"],
