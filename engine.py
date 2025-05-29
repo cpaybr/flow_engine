@@ -32,11 +32,11 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
         if not campaign:
             return {"next_message": "Erro ao carregar campanha."}
 
-        # Priorizar questions_json se tiver mais perguntas que flow_json
+        # Priorizar questions_json se existir, ou se flow_json for nulo/vazio
         flow = None
         flow_json = campaign.get("flow_json", {})
         questions_json = campaign.get("questions_json", {})
-        if questions_json.get("questions") and (not flow_json.get("questions") or len(questions_json.get("questions", [])) > len(flow_json.get("questions", []))):
+        if questions_json.get("questions"):
             flow = questions_json
         elif flow_json.get("questions"):
             flow = flow_json
@@ -53,7 +53,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
 
         log_event("Estado do usuário carregado", {"current_step": current_step, "answers": answers})
 
-        if not current_step or message.lower() in ["participar", "começar"]:
+        if not current_step or message.lower() in ["participar", "começar", "assinar"]:
             next_question = questions[0]
             save_user_state(phone, campaign_id, next_question["id"], answers)
             log_event("Início de pesquisa", {"next_question": next_question["text"]})
@@ -140,7 +140,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             return {"next_message": message_text}
 
         save_user_state(phone, campaign_id, current_question["id"], answers)
-        log_event("Resposta salva", {"phone": phone, "campaign_id": campaign_id, "question_id": current_question["id"], "answer": selected})
+        log_event("Resposta salva", {"phone": phone, "campaign_id": campaign_id, "question_id": current_question["id"], "answer": selected or message.strip()})
 
         next_question = None
         current_index = next((i for i, q in enumerate(questions) if str(q["id"]) == str(current_question["id"])), -1)
@@ -148,13 +148,16 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
         # Verifica perguntas com condição que correspondem à resposta atual
         if valid_answer and current_index != -1:
             for q in questions[current_index + 1:]:
-                if q.get("condition") and str(q["condition"]).lower() == selected.lower():
+                if q.get("condition") and str(q["condition"]).lower() == (selected.lower() if selected else message.strip().lower()):
                     next_question = q
                     break
 
         # Se não houver pergunta condicional, pega a próxima pergunta na ordem
-        if not next_question and current_index != -1 and current_index + 1 < len(questions):
-            next_question = questions[current_index + 1]
+        if not next_question and current_index != -1:
+            for i in range(current_index + 1, len(questions)):
+                if not questions[i].get("condition"):  # Só pega perguntas sem condição
+                    next_question = questions[i]
+                    break
 
         log_event("Determinado próximo passo", {
             "de": current_question["id"],
@@ -172,7 +175,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             return {"next_message": message_text}
         else:
             save_user_state(phone, campaign_id, None, answers)
-            # Usar o message da pergunta final se for tipo text
+            # Usar o message da pergunta final se for tipo text, senão o outro
             final_message = flow.get("outro", "Obrigado por participar da pesquisa!")
             if current_question.get("type") == "text" and current_question.get("message"):
                 final_message = current_question["message"]
