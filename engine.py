@@ -32,11 +32,14 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
         if not campaign:
             return {"next_message": "Erro ao carregar campanha."}
 
+        # Priorizar questions_json se tiver mais perguntas que flow_json
         flow = None
-        if campaign.get("flow_json") and campaign["flow_json"].get("questions"):
-            flow = campaign["flow_json"]
-        elif campaign.get("questions_json") and campaign["questions_json"].get("questions"):
-            flow = campaign["questions_json"]
+        flow_json = campaign.get("flow_json", {})
+        questions_json = campaign.get("questions_json", {})
+        if questions_json.get("questions") and (not flow_json.get("questions") or len(questions_json.get("questions", [])) > len(flow_json.get("questions", []))):
+            flow = questions_json
+        elif flow_json.get("questions"):
+            flow = flow_json
         else:
             return {"next_message": "Campanha sem perguntas definidas."}
 
@@ -109,7 +112,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                 except:
                     pass
             elif message.lower() in option_map:
-                message = option_map[message.lower()]  # Converter "Masculino" pra "opt_1"
+                message = option_map[message.lower()]
                 idx = int(message.split("_")[1])
                 selected = options[idx]
                 valid_answer = True
