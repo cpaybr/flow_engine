@@ -125,6 +125,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             if message.strip():
                 answers[str(current_question["id"])] = message.strip()
                 valid_answer = True
+                confirmation_text = f"✔️ Resposta registrada: {message.strip()}"
 
         if not valid_answer:
             log_event("Resposta inválida", {
@@ -144,7 +145,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
         next_question = None
         current_index = next((i for i, q in enumerate(questions) if str(q["id"]) == str(current_question["id"])), -1)
 
-        # Primeiro, verifica perguntas com condição que correspondem à resposta atual
+        # Verifica perguntas com condição que correspondem à resposta atual
         if valid_answer and current_index != -1:
             for q in questions[current_index + 1:]:
                 if q.get("condition") and str(q["condition"]).lower() == selected.lower():
@@ -171,8 +172,11 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             return {"next_message": message_text}
         else:
             save_user_state(phone, campaign_id, None, answers)
-            outro = flow.get("outro", "Obrigado por participar da pesquisa!")
-            return {"next_message": f"{confirmation_text}\n\n{outro}"}
+            # Usar o message da pergunta final se for tipo text
+            final_message = flow.get("outro", "Obrigado por participar da pesquisa!")
+            if current_question.get("type") == "text" and current_question.get("message"):
+                final_message = current_question["message"]
+            return {"next_message": f"{confirmation_text}\n\n{final_message}"}
 
     except Exception as e:
         log_event("Erro no processamento", {"error": str(e)})
