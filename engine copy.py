@@ -139,6 +139,14 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                 message_text += "\n" + "\n".join([f"{letters[i]}) {opt}" for i, opt in enumerate(options)])
             return {"next_message": message_text}
 
+        # Valida se o question_id está correto
+        if int(current_question["id"]) > len(questions):
+            log_event("Erro: question_id excede número de perguntas", {
+                "question_id": current_question["id"],
+                "total_questions": len(questions)
+            })
+            return {"next_message": "Erro interno: ID da pergunta inválido."}
+
         save_user_state(phone, campaign_id, current_question["id"], answers)
         log_event("Resposta salva", {"phone": phone, "campaign_id": campaign_id, "question_id": current_question["id"], "answer": selected or message.strip()})
 
@@ -166,6 +174,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
 
         if next_question:
             save_user_state(phone, campaign_id, next_question["id"], answers)
+            log_event("Atualizado current_question_id", {"new_id": next_question["id"]})
             message_text = f"{confirmation_text}\n\n{next_question['text']}"
             if next_question["type"] in ["quick_reply", "multiple_choice"]:
                 options = next_question.get("options", [])
