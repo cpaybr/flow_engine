@@ -160,23 +160,6 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                     next_question = q
                     break
 
-
-        # 🔒 Verifica se não há próximas perguntas válidas com base na condição
-        if not next_question and valid_answer and current_index != -1:
-            remaining_questions = questions[current_index + 1:]
-            conditioned_questions = [q for q in remaining_questions if q.get("condition")]
-            if conditioned_questions:
-                # Se todas as próximas exigem condição e nenhuma foi satisfeita, encerra
-                match_found = False
-                for q in conditioned_questions:
-                    if q["condition"].lower() == (selected.lower() if selected else message.strip().lower()):
-                        match_found = True
-                        break
-                if not match_found:
-                    save_user_state(phone, campaign_id, None, answers)
-                    final_message = flow.get("outro", "Obrigado por participar da pesquisa!")
-                    return {"next_message": f"{confirmation_text}\n\n{final_message}"}
-
         # Se não houver pergunta condicional, pega a próxima pergunta na ordem
         if not next_question and current_index != -1:
             for i in range(current_index + 1, len(questions)):
