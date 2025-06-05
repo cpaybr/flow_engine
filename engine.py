@@ -154,11 +154,26 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
         current_index = next((i for i, q in enumerate(questions) if str(q["id"]) == str(current_question["id"])), -1)
 
         # Verifica perguntas com condição que correspondem à resposta atual
-        if valid_answer and current_index != -1:
-            for q in questions[current_index + 1:]:
-                if q.get("condition") and str(q["condition"]).lower() == (selected.lower() if selected else message.strip().lower()):
-                    next_question = q
-                    break
+        # Verifica se há fluxo condicional específico via 'next'
+next_map = current_question.get("next", {})
+resposta_usuario = selected.strip() if selected else message.strip()
+next_value = next_map.get(resposta_usuario)
+
+if next_value == "end":
+    save_user_state(phone, campaign_id, None, answers)
+    final_message = flow.get("outro", "Obrigado por participar da pesquisa!")
+    return {"next_message": f"{confirmation_text}\n\n{final_message}"}
+elif isinstance(next_value, int):
+    next_question = next((q for q in questions if q["id"] == next_value), None)
+else:
+    # Verifica perguntas com 'condition' que correspondem à resposta
+    if current_index != -1:
+        for q in questions[current_index + 1:]:
+            if q.get("condition") and str(q["condition"]).lower() == resposta_usuario.lower():
+                next_question = q
+                break
+
+# Se não houver pergunta condicional, pega a próxima pergunta na ordem
 
         # Se não houver pergunta condicional, pega a próxima pergunta na ordem
         if not next_question and current_index != -1:
@@ -167,28 +182,42 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                     next_question = questions[i]
                     break
 
+        # ✅ Se mesmo assim não encontrar próxima pergunta, finaliza
+        if not next_question:
+            log_event("Finalizando pesquisa - última pergunta respondida", {
+                "phone": phone,
+                "campaign_id": campaign_id,
+                "answers": answers
+            })
+            # 🟡 Aqui marca como salvo no Supabase (ajuste sua função se necessário)
+            save_user_state(phone, campaign_id, None, answers, saved_to_supabase=True)
+            final_message = flow.get("outro", "Obrigado por participar da pesquisa!")
+            return {"next_message": f"{confirmation_text}
+
+{final_message}"}
+
         log_event("Determinado próximo passo", {
             "de": current_question["id"],
             "para": next_question["id"] if next_question else "fim"
         })
 
-        if next_question:
-            save_user_state(phone, campaign_id, next_question["id"], answers)
-            log_event("Atualizado current_question_id", {"new_id": next_question["id"]})
-            message_text = f"{confirmation_text}\n\n{next_question['text']}"
-            if next_question["type"] in ["quick_reply", "multiple_choice"]:
-                options = next_question.get("options", [])
-                if options:
-                    letters = [chr(97 + i) for i in range(len(options))]
-                    message_text += "\n" + "\n".join([f"{letters[i]}) {opt}" for i, opt in enumerate(options)])
-            return {"next_message": message_text}
-        else:
-            save_user_state(phone, campaign_id, None, answers)
-            # Usar o message da pergunta final se for tipo text, senão o outro
-            final_message = flow.get("outro", "Obrigado por participar da pesquisa!")
-            if current_question.get("type") == "text" and current_question.get("message"):
-                final_message = current_question["message"]
-            return {"next_message": f"{confirmation_text}\n\n{final_message}"}
+        save_user_state(phone, campaign_id, next_question["id"], answers)
+        log_event("Atualizado current_question_id", {"new_id": next_question["id"]})
+        message_text = f"{confirmation_text}
+
+{next_question['text']}"
+        if next_question["type"] in ["quick_reply", "multiple_choice"]:
+            options = next_question.get("options", [])
+            if options:
+                letters = [chr(97 + i) for i in range(len(options))]
+                message_text += "
+" + "
+".join([f"{letters[i]}) {opt}" for i, opt in enumerate(options)])
+        return {"next_message": message_text}
+
+    except Exception as e:
+        log_event("Erro no processamento", {"error": str(e)})
+        return {"next_message": "Ocorreu um erro ao processar sua mensagem."}
 
     except Exception as e:
         log_event("Erro no processamento", {"error": str(e)})
