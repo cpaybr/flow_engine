@@ -4,7 +4,6 @@ import json
 import re
 import requests
 
-# Configuração de logs
 logging.basicConfig(
     filename='/home/flow_engine/engine.log',
     filemode='a',
@@ -18,7 +17,6 @@ def log_event(message, data={}):
     logging.info(json.dumps(log_entry))
 
 def validate_cpf(cpf):
-    """Valida um CPF usando o algoritmo de dígitos verificadores."""
     cpf = re.sub(r'\D', '', cpf)
     if len(cpf) != 11 or cpf == cpf[0] * 11:
         return False
@@ -32,19 +30,18 @@ def validate_cpf(cpf):
     except:
         return False
 
-def get_integration_data(integration_id):
-    """Busca dados da integração no Supabase."""
+def get_integration_data(integration_id, supabase):
     try:
         response = supabase.table('iap_integration_configurations').select('config_data').eq('id', integration_id).execute()
         if response.data and len(response.data) > 0:
             return response.data[0]['config_data']
+        log_event("Nenhum dado de integração encontrado", {"integration_id": integration_id})
         return None
     except Exception as e:
         log_event("Erro ao buscar integração", {"error": str(e), "integration_id": integration_id})
         return None
 
 def send_whatsapp_template(phone, phone_number_id, template_id, template_name, access_token, header_image_url=None):
-    """Envia um template do WhatsApp com suporte a headers de imagem."""
     url = f"https://graph.facebook.com/v20.0/{phone_number_id}/messages"
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -60,21 +57,6 @@ def send_whatsapp_template(phone, phone_number_id, template_id, template_name, a
             "components": []
         }
     }
-
-    # Adiciona header de imagem, se fornecido
-    if header_image_url:
-        payload["template"]["components"].append({
-            "type": "header",
-            "parameters": [
-                {
-                    "type": "image",
-                    "image": {
-                        "link": header_image_url
-                    }
-                }
-            ]
-        })
-
     try:
         response = requests.post(url, headers=headers, json=payload)
         response.raise_for_status()
@@ -84,31 +66,39 @@ def send_whatsapp_template(phone, phone_number_id, template_id, template_name, a
         log_event("Erro ao enviar template", {"error": str(e), "phone": phone, "template_id": template_id})
         return False
 
-async def process_message(phone: str, campaign_id: str, message: str) -> dict:
+async def process_message(phone: str, campaign_id: str, message: str, supabase) -> dict:
     try:
         log_event("Iniciando processamento", {"phone": phone, "campaign_id": campaign_id, "message": message})
 
         if message.lower().startswith("começar "):
             code = message.split(" ")[1].upper()
-            campaign = get_campaign_by_code(code)
+            campaign = get_campaign_by_code(code, supabase)
             if not campaign:
                 return {"next_message": "Código de campanha inválido."}
             campaign_id = campaign['campaign_id']
-            save_user_state(phone, campaign_id, None, {})
+            save_user_state(phone, campaign_id, None, {}, supabase)
             message = "começar"
 
-        campaign = get_campaign(campaign_id)
+        campaign = get_campaign(campaign_id, supabase)
         if not campaign:
             return {"next_message": "Erro ao carregar campanha."}
 
-        # Buscar dados da integração
         integration_id = campaign.get("integration_id")
-        integration_data = get_integration_data(integration_id)
+        integration_data = get_integration_data(integration_id, supabase)
         if not integration_data:
+            log_event("Falha ao carregar dados de integração", {"integration_id": integration_id})
             return {"next_message": "Erro ao carregar dados da integração."}
 
         access_token = integration_data.get("access_token")
         phone_number_id = campaign.get("phone_number_id", integration_data.get("phone_id"))
+        template_id = campaign.get("template_id")
+        template_name = {
+            "1237512181095420": "abaixoassinado_em_defesa_da_uemg_ituiutaba",
+            "552043027785953": "pesquisa_mudana_na_cnh_para_o_exame_toxicolgico",
+            "720227527832120": "pesquisa_boa_esperana",
+            "1729306554346266": "pesquisa_rio_preto__queremos_ouvir_voce"
+            # Adicione outros templates conforme necessário
+        }.get(template_id, None)
 
         flow = None
         flow_json = campaign.get("flow_json", {})
@@ -124,29 +114,20 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
         if not questions:
             return {"next_message": "Campanha sem perguntas válidas."}
 
-        user_state = get_user_state(phone, campaign_id)
+        user_state = get_user_state(phone, campaign_id, supabase)
         current_step = user_state.get("current_step")
         answers = user_state.get("answers", {})
 
         log_event("Estado do usuário carregado", {"current_step": current_step, "answers": answers})
 
         if not current_step or message.lower() in ["participar", "começar", "assinar"]:
-            template_id = campaign.get("template_id")
-            template_name = integration_data.get("templates", {}).get(template_id, None)
-
-            # Mapa de templates com headers de imagem
-            template_image_map = {
-                "1237512181095420": "https://scontent.whatsapp.net/v/t61.29466-34/491882630_1237512184428753_7748188122744518520_n.jpg?ccb=1-7&_nc_sid=8b1bef&_nc_ohc=czs90SCGkP8Q7kNvwGAfnNe&_nc_oc=Adlbe_KDuaLgblbdg87Wr-koYZpr8N4JERrY-72Le-AGOP8bLb7gLPmz8N4fq0Nb3x2Vu07ulrh3J2Z7FPOSSmpY&_nc_zt=3&_nc_ht=scontent.whatsapp.net&edm=AH51TzQEAAAA&_nc_gid=V28yBqjyNpnV29XEBVx4hQ&oh=01_Q5Aa1gH2Al5nt3y64UAGi5h6_b85aGDIvIu1hU6O29oiZvD0_w&oe=686E3A63"
-            }
-            header_image_url = template_image_map.get(template_id)
-
             if template_name:
-                if not send_whatsapp_template(phone, phone_number_id, template_id, template_name, access_token, header_image_url):
+                if not send_whatsapp_template(phone, phone_number_id, template_id, template_name, access_token):
                     return {"next_message": "Erro ao enviar o template inicial. Tente novamente."}
 
             next_question = questions[0]
-            save_user_state(phone, campaign_id, next_question["id"], answers)
-            log_event("Início de pesquisa", {"next_question": next_question["text"], "question_id": next_question["id"]})
+            save_user_state(phone, campaign_id, next_question["id"], answers, supabase)
+            log_event("Início de campanha", {"next_question": next_question["text"], "question_id": next_question["id"]})
             message_text = next_question["text"]
             if next_question["type"] in ["quick_reply", "multiple_choice"]:
                 options = next_question.get("options", [])
@@ -239,7 +220,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             })
             return {"next_message": "Erro interno: ID da pergunta inválido."}
 
-        save_user_state(phone, campaign_id, current_question["id"], answers)
+        save_user_state(phone, campaign_id, current_question["id"], answers, supabase)
         log_event("Resposta salva", {"phone": phone, "campaign_id": campaign_id, "answer": selected or message.strip()})
 
         next_question = None
@@ -273,7 +254,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
         })
 
         if next_question:
-            save_user_state(phone, campaign_id, next_question["id"], answers)
+            save_user_state(phone, campaign_id, next_question["id"], answers, supabase)
             log_event("Atualizado question_id", {"new_id": next_question["id"]})
             message_text = f"{confirmation_text}\n\n{next_question['text']}"
             if next_question["type"] in ["quick_reply", "multiple_choice"]:
@@ -283,11 +264,11 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                     message_text += "\n" + "\n".join([f"{letters[i]}) {opt}" for i, opt in enumerate(options)])
             return {"next_message": message_text}
         else:
-            save_user_state(phone, campaign_id, None, answers)
+            save_user_state(phone, campaign_id, None, answers, supabase)
             final_message = flow.get("outro", "Obrigado por participar!")
             if current_question.get("type") == "text" and current_question.get("message"):
                 final_message = current_question["message"]
-            log_event("Pesquisa finalizada", {"phone": phone, "answers": answers})
+            log_event("Campanha finalizada", {"phone": phone, "answers": answers})
             return {"next_message": f"{confirmation_text}\n\n{final_message}"}
 
     except Exception as e:
