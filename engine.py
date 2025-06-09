@@ -2,6 +2,7 @@ from supabase_client import get_campaign, get_user_state, save_user_state, get_c
 import logging
 import json
 import re
+import requests
 
 # Configuração de logs
 logging.basicConfig(
@@ -18,7 +19,7 @@ def log_event(message, data={}):
 
 def validate_cpf(cpf):
     """Valida um CPF usando o algoritmo de dígitos verificadores."""
-    cpf = re.sub(r'\D', '', cpf)  # Remove caracteres não numéricos
+    cpf = re.sub(r'\D', '', cpf)
     if len(cpf) != 11 or cpf == cpf[0] * 11:
         return False
     try:
@@ -31,11 +32,62 @@ def validate_cpf(cpf):
     except:
         return False
 
+def get_integration_data(integration_id):
+    """Busca dados da integração no Supabase."""
+    try:
+        response = supabase.table('iap_integration_configurations').select('config_data').eq('id', integration_id).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0]['config_data']
+        return None
+    except Exception as e:
+        log_event("Erro ao buscar integração", {"error": str(e), "integration_id": integration_id})
+        return None
+
+def send_whatsapp_template(phone, phone_number_id, template_id, template_name, access_token, header_image_url=None):
+    """Envia um template do WhatsApp com suporte a headers de imagem."""
+    url = f"https://graph.facebook.com/v20.0/{phone_number_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": phone,
+        "type": "template",
+        "template": {
+            "name": template_name,
+            "language": {"code": "pt_BR"},
+            "components": []
+        }
+    }
+
+    # Adiciona header de imagem, se fornecido
+    if header_image_url:
+        payload["template"]["components"].append({
+            "type": "header",
+            "parameters": [
+                {
+                    "type": "image",
+                    "image": {
+                        "link": header_image_url
+                    }
+                }
+            ]
+        })
+
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        log_event("Template enviado com sucesso", {"phone": phone, "template_id": template_id})
+        return True
+    except requests.RequestException as e:
+        log_event("Erro ao enviar template", {"error": str(e), "phone": phone, "template_id": template_id})
+        return False
+
 async def process_message(phone: str, campaign_id: str, message: str) -> dict:
     try:
         log_event("Iniciando processamento", {"phone": phone, "campaign_id": campaign_id, "message": message})
 
-        # Suporte para iniciar por código
         if message.lower().startswith("começar "):
             code = message.split(" ")[1].upper()
             campaign = get_campaign_by_code(code)
@@ -49,7 +101,15 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
         if not campaign:
             return {"next_message": "Erro ao carregar campanha."}
 
-        # Priorizar questions_json se existir
+        # Buscar dados da integração
+        integration_id = campaign.get("integration_id")
+        integration_data = get_integration_data(integration_id)
+        if not integration_data:
+            return {"next_message": "Erro ao carregar dados da integração."}
+
+        access_token = integration_data.get("access_token")
+        phone_number_id = campaign.get("phone_number_id", integration_data.get("phone_id"))
+
         flow = None
         flow_json = campaign.get("flow_json", {})
         questions_json = campaign.get("questions_json", {})
@@ -70,8 +130,20 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
 
         log_event("Estado do usuário carregado", {"current_step": current_step, "answers": answers})
 
-        # Início da pesquisa
         if not current_step or message.lower() in ["participar", "começar", "assinar"]:
+            template_id = campaign.get("template_id")
+            template_name = integration_data.get("templates", {}).get(template_id, None)
+
+            # Mapa de templates com headers de imagem
+            template_image_map = {
+                "1237512181095420": "https://scontent.whatsapp.net/v/t61.29466-34/491882630_1237512184428753_7748188122744518520_n.jpg?ccb=1-7&_nc_sid=8b1bef&_nc_ohc=czs90SCGkP8Q7kNvwGAfnNe&_nc_oc=Adlbe_KDuaLgblbdg87Wr-koYZpr8N4JERrY-72Le-AGOP8bLb7gLPmz8N4fq0Nb3x2Vu07ulrh3J2Z7FPOSSmpY&_nc_zt=3&_nc_ht=scontent.whatsapp.net&edm=AH51TzQEAAAA&_nc_gid=V28yBqjyNpnV29XEBVx4hQ&oh=01_Q5Aa1gH2Al5nt3y64UAGi5h6_b85aGDIvIu1hU6O29oiZvD0_w&oe=686E3A63"
+            }
+            header_image_url = template_image_map.get(template_id)
+
+            if template_name:
+                if not send_whatsapp_template(phone, phone_number_id, template_id, template_name, access_token, header_image_url):
+                    return {"next_message": "Erro ao enviar o template inicial. Tente novamente."}
+
             next_question = questions[0]
             save_user_state(phone, campaign_id, next_question["id"], answers)
             log_event("Início de pesquisa", {"next_question": next_question["text"], "question_id": next_question["id"]})
@@ -83,7 +155,6 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                     message_text += "\n" + "\n".join([f"{letters[i]}) {opt}" for i, opt in enumerate(options)])
             return {"next_message": message_text}
 
-        # Encontrar pergunta atual
         current_question = next((q for q in questions if str(q["id"]) == str(current_step)), None)
         if not current_question and answers:
             ids_respondidas = sorted([int(k) for k in answers.keys() if k.isdigit()])
@@ -102,7 +173,6 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
 
         log_event("Processando resposta", {"message": message, "question": current_question["text"], "question_id": current_question["id"]})
 
-        # Validação de respostas
         if current_question["type"] in ["quick_reply", "multiple_choice"]:
             letters = [chr(97 + i) for i in range(len(options))]
             numbers = [str(i + 1) for i in range(len(options))]
@@ -126,8 +196,9 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             elif message in numbers:
                 try:
                     idx = int(message) - 1
-                    selected = options[idx]
-                    valid_answer = True
+                    if 0 <= idx < len(options):
+                        selected = options[idx]
+                        valid_answer = True
                 except:
                     pass
             elif message.lower() in option_map:
@@ -138,17 +209,16 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
 
             if valid_answer:
                 answers[str(current_question["id"])] = selected
-                confirmation_text = f"✔️ Você escolheu: {selected}"
+                confirmation_text = f"✔ Você escolheu: {selected}"
 
         elif current_question["type"] in ["text", "open_text"]:
             if message.strip():
-                # Validação de CPF para perguntas marcadas
                 if current_question.get("requires_cpf") and not validate_cpf(message.strip()):
                     log_event("CPF inválido", {"phone": phone, "cpf": message.strip()})
                     return {"next_message": "CPF inválido. Por favor, digite um CPF válido (ex.: 123.456.789-01)."}
                 answers[str(current_question["id"])] = message.strip()
                 valid_answer = True
-                confirmation_text = f"✔️ Resposta registrada: {message.strip()}"
+                confirmation_text = f"✔ Resposta registrada: {message.strip()}"
 
         if not valid_answer:
             log_event("Resposta inválida", {
@@ -156,35 +226,31 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                 "question_type": current_question["type"],
                 "answer": message
             })
-            message_text = f"❌ Resposta inválida. Escolha uma das opções abaixo:\n{current_question['text']}"
+            message_text = f"❌ Resposta inválida.\n{current_question['text']}"
             if options:
                 letters = [chr(97 + i) for i in range(len(options))]
                 message_text += "\n" + "\n".join([f"{letters[i]}) {opt}" for i, opt in enumerate(options)])
             return {"next_message": message_text}
 
-        # Verifica validade do question_id
         if isinstance(current_question["id"], (int, float)) and int(current_question["id"]) > len(questions):
-            log_event("Erro: question_id excede número de perguntas", {
+            log_event("Erro: id excede perguntas", {
                 "question_id": current_question["id"],
                 "total_questions": len(questions)
             })
             return {"next_message": "Erro interno: ID da pergunta inválido."}
 
         save_user_state(phone, campaign_id, current_question["id"], answers)
-        log_event("Resposta salva", {"phone": phone, "campaign_id": campaign_id, "question_id": current_question["id"], "answer": selected or message.strip()})
+        log_event("Resposta salva", {"phone": phone, "campaign_id": campaign_id, "answer": selected or message.strip()})
 
-        # Determina próxima pergunta
         next_question = None
         current_index = next((i for i, q in enumerate(questions) if str(q["id"]) == str(current_question["id"])), -1)
 
-        # Verifica perguntas com "condition"
         if valid_answer and current_index != -1:
             for q in questions[current_index + 1:]:
                 if q.get("condition") and str(q["condition"]).lower() == (selected.lower() if selected else message.strip().lower()):
                     next_question = q
                     break
 
-        # Verifica perguntas com "conditions" (ex.: {"resposta": {"jump": "X"}})
         if not next_question and valid_answer and current_index != -1:
             conditions = current_question.get("conditions", {})
             if selected and selected in conditions:
@@ -193,23 +259,22 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                     target_id = str(action["jump"])
                     next_question = next((q for q in questions if str(q["id"]) == target_id), None)
                 elif action == "end":
-                    next_question = None  # Finaliza a pesquisa
+                    next_question = None
 
-        # Pega a próxima pergunta na ordem, se não houver condição
         if not next_question and current_index != -1:
             for i in range(current_index + 1, len(questions)):
                 if not questions[i].get("condition"):
                     next_question = questions[i]
                     break
 
-        log_event("Determinado próximo passo", {
+        log_event("Próximo passo", {
             "de": current_question["id"],
             "para": next_question["id"] if next_question else "fim"
         })
 
         if next_question:
             save_user_state(phone, campaign_id, next_question["id"], answers)
-            log_event("Atualizado current_question_id", {"new_id": next_question["id"]})
+            log_event("Atualizado question_id", {"new_id": next_question["id"]})
             message_text = f"{confirmation_text}\n\n{next_question['text']}"
             if next_question["type"] in ["quick_reply", "multiple_choice"]:
                 options = next_question.get("options", [])
@@ -219,7 +284,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             return {"next_message": message_text}
         else:
             save_user_state(phone, campaign_id, None, answers)
-            final_message = flow.get("outro", "Obrigado por participar da pesquisa!")
+            final_message = flow.get("outro", "Obrigado por participar!")
             if current_question.get("type") == "text" and current_question.get("message"):
                 final_message = current_question["message"]
             log_event("Pesquisa finalizada", {"phone": phone, "answers": answers})
