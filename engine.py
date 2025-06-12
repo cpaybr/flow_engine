@@ -25,7 +25,9 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             if not campaign:
                 return {"next_message": "Código de campanha inválido."}
             campaign_id = campaign['campaign_id']
+            log_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": None, "answers": {}})
             save_user_state(phone, campaign_id, None, {})
+            log_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
             message = "começar"
 
         campaign = get_campaign(campaign_id)
@@ -55,7 +57,9 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
 
         if not current_step or message.lower() in ["participar", "começar", "assinar"]:
             next_question = questions[0]
+            log_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": next_question["id"], "answers": answers})
             save_user_state(phone, campaign_id, next_question["id"], answers)
+            log_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
             log_event("Início de pesquisa", {"next_question": next_question["text"]})
             message_text = next_question["text"]
             if next_question["type"] in ["quick_reply", "multiple_choice"]:
@@ -147,7 +151,9 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             })
             return {"next_message": "Erro interno: ID da pergunta inválido."}
 
+        log_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": current_question["id"], "answers": answers})
         save_user_state(phone, campaign_id, current_question["id"], answers)
+        log_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
         log_event("Resposta salva", {"phone": phone, "campaign_id": campaign_id, "question_id": current_question["id"], "answer": selected or message.strip()})
 
         next_question = None
@@ -173,7 +179,9 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
         })
 
         if next_question:
+            log_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": next_question["id"], "answers": answers})
             save_user_state(phone, campaign_id, next_question["id"], answers)
+            log_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
             log_event("Atualizado current_question_id", {"new_id": next_question["id"]})
             message_text = f"{confirmation_text}\n\n{next_question['text']}"
             if next_question["type"] in ["quick_reply", "multiple_choice"]:
@@ -183,7 +191,9 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                     message_text += "\n" + "\n".join([f"{letters[i]}) {opt}" for i, opt in enumerate(options)])
             return {"next_message": message_text}
         else:
+            log_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": None, "answers": answers})
             save_user_state(phone, campaign_id, None, answers)
+            log_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
             # Usar o message da pergunta final se for tipo text, senão o outro
             final_message = flow.get("outro", "Obrigado por participar da pesquisa!")
             if current_question.get("type") == "text" and current_question.get("message"):
