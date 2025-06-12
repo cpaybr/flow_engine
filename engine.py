@@ -2,7 +2,7 @@ from supabase_client import get_campaign, get_user_state, save_user_state, get_c
 import logging
 import json
 
-# Configuração de logs
+# Configuração de logs para engine.log
 logging.basicConfig(
     filename='/home/flow_engine/engine.log',
     filemode='a',
@@ -11,9 +11,20 @@ logging.basicConfig(
     force=True
 )
 
+# Configuração de log específico para petition.log
+petition_logger = logging.getLogger('petition')
+petition_handler = logging.FileHandler('/home/flow_engine/petition.log')
+petition_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+petition_logger.addHandler(petition_handler)
+petition_logger.setLevel(logging.INFO)
+
 def log_event(message, data={}):
     log_entry = {'message': message, 'data': data}
     logging.info(json.dumps(log_entry))
+
+def log_petition_event(message, data={}):
+    log_entry = {'message': message, 'data': data}
+    petition_logger.info(json.dumps(log_entry))
 
 async def process_message(phone: str, campaign_id: str, message: str) -> dict:
     try:
@@ -26,8 +37,10 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                 return {"next_message": "Código de campanha inválido."}
             campaign_id = campaign['campaign_id']
             log_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": None, "answers": {}})
+            log_petition_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": None, "answers": {}})
             save_user_state(phone, campaign_id, None, {})
             log_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
+            log_petition_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
             message = "começar"
 
         campaign = get_campaign(campaign_id)
@@ -58,8 +71,10 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
         if not current_step or message.lower() in ["participar", "começar", "assinar"]:
             next_question = questions[0]
             log_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": next_question["id"], "answers": answers})
+            log_petition_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": next_question["id"], "answers": answers})
             save_user_state(phone, campaign_id, next_question["id"], answers)
             log_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
+            log_petition_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
             log_event("Início de pesquisa", {"next_question": next_question["text"]})
             message_text = next_question["text"]
             if next_question["type"] in ["quick_reply", "multiple_choice"]:
@@ -152,8 +167,10 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             return {"next_message": "Erro interno: ID da pergunta inválido."}
 
         log_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": current_question["id"], "answers": answers})
+        log_petition_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": current_question["id"], "answers": answers})
         save_user_state(phone, campaign_id, current_question["id"], answers)
         log_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
+        log_petition_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
         log_event("Resposta salva", {"phone": phone, "campaign_id": campaign_id, "question_id": current_question["id"], "answer": selected or message.strip()})
 
         next_question = None
@@ -180,8 +197,10 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
 
         if next_question:
             log_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": next_question["id"], "answers": answers})
+            log_petition_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": next_question["id"], "answers": answers})
             save_user_state(phone, campaign_id, next_question["id"], answers)
             log_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
+            log_petition_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
             log_event("Atualizado current_question_id", {"new_id": next_question["id"]})
             message_text = f"{confirmation_text}\n\n{next_question['text']}"
             if next_question["type"] in ["quick_reply", "multiple_choice"]:
@@ -192,13 +211,15 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             return {"next_message": message_text}
         else:
             log_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": None, "answers": answers})
+            log_petition_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": None, "answers": answers})
             save_user_state(phone, campaign_id, None, answers)
             log_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
+            log_petition_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
             # Usar o message da pergunta final se for tipo text, senão o outro
             final_message = flow.get("outro", "Obrigado por participar da pesquisa!")
             if current_question.get("type") == "text" and current_question.get("message"):
                 final_message = current_question["message"]
-            return {"next_message": f"{confirmation_text}\n\n{final_message}"}
+            return {"next_message": f"{final_message}"}
 
     except Exception as e:
         log_event("Erro no processamento", {"error": str(e)})

@@ -4,16 +4,27 @@ from dotenv import load_dotenv
 import logging
 import json
 
-# Configurar logging estruturado
+# Configurar logging para supabase.log
 logging.basicConfig(
     filename='supabase.log',
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
+# Configuração de log específico para petition.log
+petition_logger = logging.getLogger('petition')
+petition_handler = logging.FileHandler('/home/flow_engine/petition.log')
+petition_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+petition_logger.addHandler(petition_handler)
+petition_logger.setLevel(logging.INFO)
+
 def log_event(message, data={}):
     log_entry = {'message': message, 'data': data}
     logging.info(json.dumps(log_entry))
+
+def log_petition_event(message, data={}):
+    log_entry = {'message': message, 'data': data}
+    petition_logger.info(json.dumps(log_entry))
 
 load_dotenv()
 
@@ -69,6 +80,12 @@ def save_user_state(phone, campaign_id, step, answers):
     params = {
         "on_conflict": "phone,campaign_id"
     }
+    log_petition_event("Tentando salvar estado do usuário no Supabase", {
+        "phone": phone,
+        "campaign_id": campaign_id,
+        "step": step,
+        "answers": answers
+    })
     res = requests.post(url, headers=headers, params=params, json=payload)
     success = res.status_code in (200, 201)
     log_event("Salvando estado do usuário", {
@@ -76,6 +93,13 @@ def save_user_state(phone, campaign_id, step, answers):
         "campaign_id": campaign_id,
         "step": step,
         "answers": answers,
+        "status_code": res.status_code,
+        "response": res.text,
+        "success": success
+    })
+    log_petition_event("Resultado do salvamento no Supabase", {
+        "phone": phone,
+        "campaign_id": campaign_id,
         "status_code": res.status_code,
         "response": res.text,
         "success": success
