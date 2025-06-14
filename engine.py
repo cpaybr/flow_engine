@@ -159,6 +159,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             if response:
                 if "cpf" in question_text:
                     if not is_valid_cpf(response):
+                        log_event("CPF inválido detectado", {"cpf": response, "phone": phone})
                         return {
                             "next_message": "❌ CPF inválido. Por favor, digite um CPF válido com 11 dígitos."
                         }
@@ -242,5 +243,12 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             return {"next_message": f"{final_message}"}
 
     except Exception as e:
-        log_event("Erro no processamento", {"error": str(e)})
-        return {"next_message": "Ocorreu um erro ao processar sua mensagem."}
+        import traceback
+        log_event("Erro no processamento", {
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "phone": phone,
+            "message": message,
+            "campaign_id": campaign_id
+        })
+        return {"next_message": "⚠️ Ocorreu um erro interno. Por favor, tente novamente ou digite outro CPF."}
