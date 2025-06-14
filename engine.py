@@ -1,19 +1,31 @@
 from supabase_client import get_campaign, get_user_state, save_user_state, get_campaign_by_code
 import logging
 import json
+import re
 
 def is_valid_cpf(cpf: str) -> bool:
-    cpf = re.sub(r'\D', '', cpf)
-    if len(cpf) != 11 or cpf == cpf[0] * 11:
-        return False
-    for i in range(9, 11):
-        value = sum(int(cpf[num]) * ((i+1) - num) for num in range(0, i))
-        digit = ((value * 10) % 11) % 10
-        if digit != int(cpf[i]):
+    """ Valida CPF, considerando tanto formatados (xxx.xxx.xxx-xx) quanto não formatados """
+    try:
+        cpf = re.sub(r'[^0-9]', '', cpf)  # Remove tudo que não é dígito
+        
+        # Verifica se tem 11 dígitos e não é uma sequência de dígitos repetidos
+        if len(cpf) != 11 or cpf == cpf[0] * 11:
             return False
-    return True
-
-
+            
+        # Calcula o primeiro dígito verificador
+        soma = sum(int(cpf[i]) * (10 - i) for i in range(9))
+        d1 = (soma * 10) % 11
+        d1 = d1 if d1 < 10 else 0
+        
+        # Calcula o segundo dígito verificador
+        soma = sum(int(cpf[i]) * (11 - i) for i in range(10))
+        d2 = (soma * 10) % 11
+        d2 = d2 if d2 < 10 else 0
+        
+        # Verifica se os dígitos calculados conferem com os informados
+        return cpf[-2:] == f"{d1}{d2}"
+    except:
+        return False
 
 # Configuração de logs para engine.log
 logging.basicConfig(
@@ -161,11 +173,17 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                     if not is_valid_cpf(response):
                         log_event("CPF inválido detectado", {"cpf": response, "phone": phone})
                         return {
-                            "next_message": "❌ CPF inválido. Por favor, digite um CPF válido com 11 dígitos."
+                            "next_message": "❌ CPF inválido. Por favor, digite um CPF válido com 11 dígitos (apenas números)."
                         }
-                answers[str(current_question["id"])] = response
-                valid_answer = True
-                confirmation_text = f"✔️ Resposta registrada: {response}"
+                    # Formata o CPF antes de salvar
+                    cpf_limpo = re.sub(r'[^0-9]', '', response)
+                    answers[str(current_question["id"])] = cpf_limpo
+                    valid_answer = True
+                    confirmation_text = f"✔️ CPF registrado: {cpf_limpo[:3]}.{cpf_limpo[3:6]}.{cpf_limpo[6:9]}-{cpf_limpo[9:]}"
+                else:
+                    answers[str(current_question["id"])] = response
+                    valid_answer = True
+                    confirmation_text = f"✔️ Resposta registrada: {response}"
 
         if not valid_answer:
             log_event("Resposta inválida", {
