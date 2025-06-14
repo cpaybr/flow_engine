@@ -2,6 +2,19 @@ from supabase_client import get_campaign, get_user_state, save_user_state, get_c
 import logging
 import json
 
+def is_valid_cpf(cpf: str) -> bool:
+    cpf = re.sub(r'\D', '', cpf)
+    if len(cpf) != 11 or cpf == cpf[0] * 11:
+        return False
+    for i in range(9, 11):
+        value = sum(int(cpf[num]) * ((i+1) - num) for num in range(0, i))
+        digit = ((value * 10) % 11) % 10
+        if digit != int(cpf[i]):
+            return False
+    return True
+
+
+
 # Configuração de logs para engine.log
 logging.basicConfig(
     filename='/home/flow_engine/engine.log',
@@ -141,10 +154,17 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                 confirmation_text = f"✔️ Você escolheu: {selected}"
 
         elif current_question["type"] in ["text", "open_text"]:
-            if message.strip():
-                answers[str(current_question["id"])] = message.strip()
+            question_text = current_question.get("text", "").lower()
+            response = message.strip()
+            if response:
+                if "cpf" in question_text:
+                    if not is_valid_cpf(response):
+                        return {
+                            "next_message": "❌ CPF inválido. Por favor, digite um CPF válido com 11 dígitos."
+                        }
+                answers[str(current_question["id"])] = response
                 valid_answer = True
-                confirmation_text = f"✔️ Resposta registrada: {message.strip()}"
+                confirmation_text = f"✔️ Resposta registrada: {response}"
 
         if not valid_answer:
             log_event("Resposta inválida", {
