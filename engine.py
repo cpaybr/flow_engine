@@ -141,24 +141,13 @@ async def process_message(phone: str, campaign_id: str, message: str) -> Dict[st
             save_user_state(phone, campaign_id, next_question["id"], answers)
             message_text = next_question["text"]
             
-            if next_question["type"] in ["quick_reply", "multiple_choice"] and len(next_question["options"]) <= 3:
-                return {
-                    "next_message": {
-                        "type": "interactive",
-                        "interactive": {
-                            "type": "button",
-                            "body": {"text": message_text},
-                            "action": {
-                                "buttons": [{"type": "reply", "reply": {"id": f"opt_{i}", "title": opt}} for i, opt in enumerate(next_question["options"])]
-                            }
-                        }
-                    }
-                }
-            elif next_question["type"] in ["quick_reply", "multiple_choice"]:
-                letters = [chr(97 + i) for i in range(len(next_question["options"]))]
-                message_text += "\n" + "\n".join([
-                    f"{letters[i]}) {opt}" for i, opt in enumerate(next_question["options"])
-                ])
+            if next_question["type"] in ["quick_reply", "multiple_choice"]:
+                options = next_question.get("options", [])
+                if options:
+                    letters = [chr(97 + i) for i in range(len(options))]
+                    message_text += "\n" + "\n".join([
+                        f"{letters[i]}) {opt}" for i, opt in enumerate(options)
+                    ])
             return {"next_message": message_text}
 
         current_question = next(
@@ -258,20 +247,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> Dict[st
                 "answer": message
             })
             message_text = f"❌ Resposta inválida. Escolha uma das opções abaixo:\n{current_question['text']}"
-            if options and len(options) <= 3:
-                return {
-                    "next_message": {
-                        "type": "interactive",
-                        "interactive": {
-                            "type": "button",
-                            "body": {"text": message_text},
-                            "action": {
-                                "buttons": [{"type": "reply", "reply": {"id": f"opt_{i}", "title": opt}} for i, opt in enumerate(options)]
-                            }
-                        }
-                    }
-                }
-            elif options:
+            if options:
                 letters = [chr(97 + i) for i in range(len(options))]
                 message_text += "\n" + "\n".join([
                     f"{letters[i]}) {opt}" for i, opt in enumerate(options)
@@ -301,11 +277,17 @@ async def process_message(phone: str, campaign_id: str, message: str) -> Dict[st
         )
 
         if valid_answer and current_index != -1:
-            # Avança todas as perguntas condicionais restantes
-            for i in range(current_index + 1, len(questions)):
-                q = questions[i]
-                if not q.get("condition") or (q.get("condition") and q["condition"].lower() == (selected.lower() if selected else message.strip().lower())):
+            for q in questions[current_index + 1:]:
+                if q.get("condition") and str(q["condition"]).lower() == (
+                    selected.lower() if selected else message.strip().lower()
+                ):
                     next_question = q
+                    break
+
+        if not next_question and current_index != -1:
+            for i in range(current_index + 1, len(questions)):
+                if not questions[i].get("condition"):
+                    next_question = questions[i]
                     break
 
         log_event("Determinado próximo passo", {
@@ -316,24 +298,13 @@ async def process_message(phone: str, campaign_id: str, message: str) -> Dict[st
         if next_question:
             save_user_state(phone, campaign_id, next_question["id"], answers)
             message_text = f"{normalize_text(confirmation_text)}\n\n{normalize_text(next_question['text'])}"
-            if next_question["type"] in ["quick_reply", "multiple_choice"] and len(next_question["options"]) <= 3:
-                return {
-                    "next_message": {
-                        "type": "interactive",
-                        "interactive": {
-                            "type": "button",
-                            "body": {"text": message_text},
-                            "action": {
-                                "buttons": [{"type": "reply", "reply": {"id": f"opt_{i}", "title": opt}} for i, opt in enumerate(next_question["options"])]
-                            }
-                        }
-                    }
-                }
-            elif next_question["type"] in ["quick_reply", "multiple_choice"]:
-                letters = [chr(97 + i) for i in range(len(next_question["options"]))]
-                message_text += "\n" + "\n".join([
-                    f"{letters[i]}) {normalize_text(opt)}" for i, opt in enumerate(next_question["options"])
-                ])
+            if next_question["type"] in ["quick_reply", "multiple_choice"]:
+                options = next_question.get("options", [])
+                if options:
+                    letters = [chr(97 + i) for i in range(len(options))]
+                    message_text += "\n" + "\n".join([
+                        f"{letters[i]}) {normalize_text(opt)}" for i, opt in enumerate(options)
+                    ])
             return {"next_message": message_text}
         else:
             save_user_state(phone, campaign_id, None, answers)
