@@ -8,19 +8,27 @@ def is_valid_cpf(cpf: str) -> bool:
     """Valida CPF, considerando tanto formatados (xxx.xxx.xxx-xx) quanto não formatados"""
     try:
         cpf = re.sub(r'[^0-9]', '', cpf)  # Remove tudo que não é dígito
+        
+        # Verifica se tem 11 dígitos e não é uma sequência de dígitos repetidos
         if len(cpf) != 11 or cpf == cpf[0] * 11:
             return False
+            
+        # Calcula o primeiro dígito verificador
         soma = sum(int(cpf[i]) * (10 - i) for i in range(9))
         d1 = (soma * 10) % 11
         d1 = d1 if d1 < 10 else 0
+        
+        # Calcula o segundo dígito verificador
         soma = sum(int(cpf[i]) * (11 - i) for i in range(10))
         d2 = (soma * 10) % 11
         d2 = d2 if d2 < 10 else 0
+        
+        # Verifica se os dígitos calculados conferem com os informados
         return cpf[-2:] == f"{d1}{d2}"
     except:
         return False
 
-# Configuração de logs
+# Configuração de logs para engine.log
 logging.basicConfig(
     filename='/home/flow_engine/engine.log',
     filemode='a',
@@ -28,6 +36,8 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     force=True
 )
+
+# Configuração de log específico para petition.log
 petition_logger = logging.getLogger('petition')
 petition_handler = logging.FileHandler('/home/flow_engine/petition.log')
 petition_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
@@ -52,15 +62,18 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             if not campaign:
                 return {"next_message": "Código de campanha inválido."}
             campaign_id = campaign['campaign_id']
-            log_event("Inicializando campanha via código", {"phone": phone, "campaign_id": campaign_id})
-            log_petition_event("Inicializando campanha via código", {"phone": phone, "campaign_id": campaign_id})
+            log_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": None, "answers": {}})
+            log_petition_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": None, "answers": {}})
             save_user_state(phone, campaign_id, None, {})
+            log_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
+            log_petition_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
             message = "começar"
 
         campaign = get_campaign(campaign_id)
         if not campaign:
             return {"next_message": "Erro ao carregar campanha."}
 
+        # Priorizar questions_json se existir, ou se flow_json for nulo/vazio
         flow = None
         flow_json = campaign.get("flow_json", {})
         questions_json = campaign.get("questions_json", {})
@@ -87,7 +100,11 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
         if not current_step or message.lower() in ["participar", "começar", "assinar"]:
             next_question = questions[0]
             log_event("Iniciando pesquisa", {"question_id": next_question["id"], "question_text": next_question["text"]})
+            log_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": next_question["id"], "answers": answers})
+            log_petition_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": next_question["id"], "answers": answers})
             save_user_state(phone, campaign_id, next_question["id"], answers)
+            log_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
+            log_petition_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
             message_text = next_question["text"]
             if next_question["type"] in ["quick_reply", "multiple_choice"]:
                 options = next_question.get("options", [])
@@ -97,6 +114,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             return {"next_message": message_text}
 
         current_question = next((q for q in questions if str(q["id"]) == str(current_step)), None)
+
         if not current_question and answers:
             ids_respondidas = sorted([int(k) for k in answers.keys()])
             ultima_id = ids_respondidas[-1]
@@ -117,7 +135,6 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             letters = [chr(97 + i) for i in range(len(options))]
             numbers = [str(i + 1) for i in range(len(options))]
             option_map = {opt.lower(): f"opt_{i}" for i, opt in enumerate(options)}
-            message_lower = message.lower()
 
             if message.startswith("opt_"):
                 try:
@@ -127,9 +144,9 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                         valid_answer = True
                 except:
                     pass
-            elif message_lower in letters:
+            elif message.lower() in letters:
                 try:
-                    idx = letters.index(message_lower)
+                    idx = letters.index(message.lower())
                     if 0 <= idx < len(options):
                         selected = options[idx]
                         valid_answer = True
@@ -143,8 +160,8 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                         valid_answer = True
                 except:
                     pass
-            elif message_lower in option_map:
-                message = option_map[message_lower]
+            elif message.lower() in option_map:
+                message = option_map[message.lower()]
                 idx = int(message.split("_")[1])
                 selected = options[idx]
                 valid_answer = True
@@ -191,25 +208,27 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
             })
             return {"next_message": "Erro interno: ID da pergunta inválido."}
 
-        log_event("Salvando resposta", {"phone": phone, "campaign_id": campaign_id, "question_id": current_question["id"], "answer": selected or message.strip()})
+        log_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": current_question["id"], "answers": answers})
+        log_petition_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": current_question["id"], "answers": answers})
         save_user_state(phone, campaign_id, current_question["id"], answers)
-        log_event("Estado salvo", {"phone": phone, "campaign_id": campaign_id})
+        log_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
+        log_petition_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
+        log_event("Resposta salva", {"phone": phone, "campaign_id": campaign_id, "question_id": current_question["id"], "answer": selected or message.strip()})
 
-        # Seleção da próxima pergunta
         next_question = None
         current_index = next((i for i, q in enumerate(questions) if str(q["id"]) == str(current_question["id"])), -1)
-        condition = selected.lower() if selected else None
 
+        # Buscar a próxima pergunta com base na condição
         if valid_answer and current_index != -1:
-            # Buscar a próxima pergunta com a mesma condição, na ordem dos IDs
-            for q in sorted(questions[current_index + 1:], key=lambda x: int(x["id"])):
-                if q.get("condition") and q.get("condition").lower() == condition:
+            condition = selected.lower() if selected else None
+            for q in questions[current_index + 1:]:
+                if not q.get("condition") or (condition and q.get("condition").lower() == condition):
                     next_question = q
-                    log_event("Próxima pergunta selecionada", {"question_id": q["id"], "question_text": q["text"]})
                     break
 
         # Validação de respostas obrigatórias para petições
-        if is_petition and valid_answer:
+        if is_petition and not next_question and valid_answer:
+            condition = selected.lower() if selected else None
             required_questions = [q for q in questions if q.get("condition") and q.get("condition").lower() == condition and q["type"] != "text"]
             for q in required_questions:
                 if str(q["id"]) not in answers:
@@ -217,9 +236,18 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                     log_event("Pergunta obrigatória não respondida encontrada", {"question_id": q["id"], "question_text": q["text"]})
                     break
 
+        log_event("Determinado próximo passo", {
+            "de": current_question["id"],
+            "para": next_question["id"] if next_question else "fim"
+        })
+
         if next_question:
-            log_event("Avançando para próxima pergunta", {"question_id": next_question["id"], "question_text": next_question["text"]})
+            log_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": next_question["id"], "answers": answers})
+            log_petition_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": next_question["id"], "answers": answers})
             save_user_state(phone, campaign_id, next_question["id"], answers)
+            log_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
+            log_petition_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
+            log_event("Atualizado current_question_id", {"new_id": next_question["id"]})
             message_text = f"{confirmation_text}\n\n{next_question['text']}"
             if next_question["type"] in ["quick_reply", "multiple_choice"]:
                 options = next_question.get("options", [])
@@ -228,27 +256,25 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
                     message_text += "\n" + "\n".join([f"{letters[i]}) {opt}" for i, opt in enumerate(options)])
             return {"next_message": message_text}
         else:
-            # Verificação final para petições
+            # Antes de finalizar, verificar novamente respostas obrigatórias para petições
             if is_petition:
+                condition = selected.lower() if selected else None
                 required_questions = [q for q in questions if q.get("condition") and q.get("condition").lower() == condition and q["type"] != "text"]
                 for q in required_questions:
                     if str(q["id"]) not in answers:
                         log_event("Faltam respostas obrigatórias", {"question_id": q["id"], "question_text": q["text"]})
-                        save_user_state(phone, campaign_id, q["id"], answers)
-                        message_text = f"Por favor, responda: {q['text']}"
-                        if q["type"] in ["quick_reply", "multiple_choice"]:
-                            options = q.get("options", [])
-                            if options:
-                                letters = [chr(97 + i) for i in range(len(options))]
-                                message_text += "\n" + "\n".join([f"{letters[i]}) {opt}" for i, opt in enumerate(options)])
-                        return {"next_message": message_text}
+                        return {"next_message": f"Por favor, responda: {q['text']}"}
 
-            log_event("Finalizando pesquisa", {"phone": phone, "campaign_id": campaign_id, "answers": answers})
-            log_petition_event("Finalizando petição", {"phone": phone, "campaign_id": campaign_id, "answers": answers})
+            log_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": None, "answers": answers})
+            log_petition_event("Chamando save_user_state", {"phone": phone, "campaign_id": campaign_id, "question_id": None, "answers": answers})
             save_user_state(phone, campaign_id, None, answers)
+            log_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
+            log_petition_event("save_user_state executado", {"phone": phone, "campaign_id": campaign_id})
             final_message = flow.get("outro", "Obrigado por participar da pesquisa!")
             if current_question.get("type") == "text" and current_question.get("message"):
                 final_message = current_question["message"]
+            log_event("Pesquisa finalizada", {"phone": phone, "campaign_id": campaign_id, "answers": answers})
+            log_petition_event("Petição finalizada", {"phone": phone, "campaign_id": campaign_id, "answers": answers})
             return {"next_message": final_message}
 
     except Exception as e:
