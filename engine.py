@@ -184,8 +184,32 @@ class SurveyProcessor:
                 return True, message, f"✔️ Resposta registrada: {message}"
         return False, "", ""
 
-    def _get_next_question(self, current_question: Dict, selected_answer: str) -> Optional[Dict]:
-        """Determines the next question based on the current question and answer."""
+def _get_next_question(self, current_question: Dict, selected_answer: str) -> Optional[Dict]:
+    """Determines the next question based on the current question and answer."""
+    current_index = next(
+        (i for i, q in enumerate(self.questions) if str(q["id"]) == str(current_question["id"])),
+        -1
+    )
+    if current_index == -1:
+        log_event("Current question index not found", {"current_id": current_question["id"]}, self.survey_type)
+        return None
+
+    log_event("Searching for next question", {"current_index": current_index, "current_id": current_question["id"]}, self.survey_type)
+    # Check for conditional questions first
+    for i, q in enumerate(self.questions[current_index + 1:], start=current_index + 1):
+        log_event("Checking question", {"index": i, "id": q["id"], "type": q["type"], "condition": q.get("condition"), "options": q.get("options")}, self.survey_type)
+        if q.get("condition") and normalize_text(q["condition"]).lower() == normalize_text(selected_answer).lower():
+            log_event("Next question found by condition", {"next_id": q["id"]}, self.survey_type)
+            return q
+
+    # Fall back to the next non-conditional question
+    for i, q in enumerate(self.questions[current_index + 1:], start=current_index + 1):
+        log_event("Checking non-conditional question", {"index": i, "id": q["id"], "type": q["type"], "options": q.get("options")}, self.survey_type)
+        if not q.get("condition"):
+            log_event("Next non-conditional question found", {"next_id": q["id"]}, self.survey_type)
+            return q
+    log_event("No next question found", {}, self.survey_type)
+    return None        """Determines the next question based on the current question and answer."""
         current_index = next(
             (i for i, q in enumerate(self.questions) if str(q["id"]) == str(current_question["id"])),
             -1
