@@ -116,12 +116,6 @@ class SurveyProcessor:
                 "condition": normalize_text(q["condition"]) if "condition" in q else None,
                 "message": normalize_text(q.get("message", "")) if "message" in q else None
             }
-            log_event("Question loaded", {
-                "id": safe_q["id"],
-                "type": safe_q["type"],
-                "options": safe_q["options"],
-                "raw_options": q.get("options", [])
-            }, self.survey_type)
             questions.append(safe_q)
         log_event("Questions loaded", {"question_count": len(questions)}, self.survey_type)
         return questions
@@ -250,26 +244,9 @@ class SurveyProcessor:
             if not current_step or message.lower() in ["participar", "começar", "assinar"]:
                 next_question = self.questions[0]
                 save_user_state(self.phone, self.campaign_id, next_question["id"], answers)
-                if next_question["type"] in ["quick_reply", "multiple_choice"] and len(next_question["options"]) >= 3:
-                    message_text = {
-                        "messaging_product": "whatsapp",
-                        "to": self.phone,
-                        "type": "interactive",
-                        "interactive": {
-                            "type": "button",
-                            "body": {"text": next_question["text"]},
-                            "action": {
-                                "buttons": [{"type": "reply", "reply": {"id": f"opt_{i}", "title": opt}} for i, opt in enumerate(next_question["options"][:3])]
-                            }
-                        }
-                    }
-                else:
-                    message_text = {
-                        "messaging_product": "whatsapp",
-                        "to": self.phone,
-                        "type": "text",
-                        "text": {"body": next_question["text"] + self._format_options(next_question)}
-                    }
+                message_text = next_question["text"]
+                if next_question["type"] in ["quick_reply", "multiple_choice"]:
+                    message_text += self._format_options(next_question)
                 log_event("Survey started", {"first_question_id": next_question["id"]}, self.survey_type)
                 return {"next_message": message_text}
 
@@ -292,14 +269,9 @@ class SurveyProcessor:
             # Validate answer
             valid_answer, selected_answer, confirmation_text = self._validate_answer(current_question, message)
             if not valid_answer:
-                message_text = {
-                    "messaging_product": "whatsapp",
-                    "to": self.phone,
-                    "type": "text",
-                    "text": {"body": f"❌ Resposta inválida. Escolha uma das opções abaixo:\n{current_question['text']}"}
-                }
+                message_text = f"❌ Resposta inválida. Escolha uma das opções abaixo:\n{current_question['text']}"
                 if current_question["type"] in ["quick_reply", "multiple_choice"]:
-                    message_text["text"]["body"] += self._format_options(current_question)
+                    message_text += self._format_options(current_question)
                 log_event("Invalid answer", {
                     "question_id": current_question["id"],
                     "answer": message
@@ -318,30 +290,12 @@ class SurveyProcessor:
             next_question = self._get_next_question(current_question, selected_answer)
             if next_question:
                 save_user_state(self.phone, self.campaign_id, next_question["id"], answers)
-                if next_question["type"] in ["quick_reply", "multiple_choice"] and len(next_question["options"]) >= 3:
-                    message_text = {
-                        "messaging_product": "whatsapp",
-                        "to": self.phone,
-                        "type": "interactive",
-                        "interactive": {
-                            "type": "button",
-                            "body": {"text": f"{confirmation_text}\n\n{next_question['text']}"},
-                            "action": {
-                                "buttons": [{"type": "reply", "reply": {"id": f"opt_{i}", "title": opt}} for i, opt in enumerate(next_question["options"][:3])]
-                            }
-                        }
-                    }
-                else:
-                    message_text = {
-                        "messaging_product": "whatsapp",
-                        "to": self.phone,
-                        "type": "text",
-                        "text": {"body": f"{confirmation_text}\n\n{next_question['text']}" + self._format_options(next_question)}
-                    }
+                message_text = f"{confirmation_text}\n\n{next_question['text']}"
+                if next_question["type"] in ["quick_reply", "multiple_choice"]:
+                    message_text += self._format_options(next_question)
                 log_event("Moving to next question", {
                     "from": current_question["id"],
-                    "to": next_question["id"],
-                    "message_text": message_text
+                    "to": next_question["id"]
                 }, self.survey_type)
                 return {"next_message": message_text}
 
@@ -357,12 +311,7 @@ class SurveyProcessor:
                     "answers": answers
                 })
             log_event("Survey completed", {"answers": answers}, self.survey_type)
-            return {"next_message": {
-                "messaging_product": "whatsapp",
-                "to": self.phone,
-                "type": "text",
-                "text": {"body": final_message}
-            }}
+            return {"next_message": final_message}
 
         except Exception as e:
             log_event("Processing error", {
@@ -371,12 +320,7 @@ class SurveyProcessor:
                 "phone": self.phone,
                 "message": message
             }, self.survey_type)
-            return {"next_message": {
-                "messaging_product": "whatsapp",
-                "to": self.phone,
-                "type": "text",
-                "text": {"body": "⚠️ Ocorreu um erro interno. Por favor, tente novamente."}
-            }}
+            return {"next_message": "⚠️ Ocorreu um erro interno. Por favor, tente novamente."}
 
 async def process_message(phone: str, campaign_id: str, message: str) -> Dict[str, Any]:
     """Entrypoint for processing messages."""
