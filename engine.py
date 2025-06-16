@@ -200,9 +200,9 @@ async def process_message(phone: str, campaign_id: str, message: str) -> dict:
         condition = selected.lower() if selected else None
 
         if valid_answer and current_index != -1:
-            # Buscar a próxima pergunta com a mesma condição, na ordem dos IDs, exceto a mensagem final
+            # Buscar a próxima pergunta com a mesma condição, na ordem dos IDs
             for q in sorted(questions[current_index + 1:], key=lambda x: int(x["id"])):
-                if q.get("condition") and q.get("condition").lower() == condition and q["type"] != "text":
+                if q.get("condition") and q.get("condition").lower() == condition:
                     next_question = q
                     log_event("Próxima pergunta selecionada", {"question_id": q["id"], "question_text": q["text"]})
                     break
