@@ -74,40 +74,34 @@ def save_user_state(phone, campaign_id, step, answers):
         "campaign_id": campaign_id,
         "current_step": str(step) if step else None,
         "answers": answers,
-        "completed_at": "now()" if step is None else None
     }
     headers = HEADERS.copy()
     headers["Prefer"] = "resolution=merge-duplicates"
-    
-    # Log detalhado antes de salvar
-    log_event("Salvando estado do usuário - DETALHES", {
+    params = {
+        "on_conflict": "phone,campaign_id"
+    }
+    log_petition_event("Tentando salvar estado do usuário no Supabase", {
+        "phone": phone,
+        "campaign_id": campaign_id,
+        "step": step,
+        "answers": answers
+    })
+    res = requests.post(url, headers=headers, params=params, json=payload)
+    success = res.status_code in (200, 201)
+    log_event("Salvando estado do usuário", {
         "phone": phone,
         "campaign_id": campaign_id,
         "step": step,
         "answers": answers,
-        "payload": payload
+        "status_code": res.status_code,
+        "response": res.text,
+        "success": success
     })
-    
-    res = requests.post(url, headers=headers, json=payload)
-    success = res.status_code in (200, 201, 204)
-    
-    # Log do resultado
-    log_event("Resultado do salvamento", {
+    log_petition_event("Resultado do salvamento no Supabase", {
         "phone": phone,
         "campaign_id": campaign_id,
         "status_code": res.status_code,
         "response": res.text,
         "success": success
     })
-    
-    # Log adicional para petições
-    if step is None:  # Indica conclusão
-        log_petition_event("Tentativa de salvamento final", {
-            "phone": phone,
-            "campaign_id": campaign_id,
-            "status_code": res.status_code,
-            "response": res.text,
-            "success": success
-        })
-    
     return success
