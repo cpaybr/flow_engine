@@ -130,11 +130,32 @@ class SurveyProcessor:
             return False
         return True
 
-    def _format_options(self, question: Dict) -> str:
-        """Formats question options for display."""
+    def _format_options(self, question: Dict) -> Union[str, Dict]:
+        """Formats question options for display, returning interactive payload for ≤ 3 options or text for > 3."""
         options = question.get("options", [])
         if not options:
             return ""
+        if len(options) <= 3 and question["type"] in ["quick_reply", "multiple_choice"]:
+            # Retorna payload interativo para até 3 opções
+            buttons = [
+                {
+                    "type": "reply",
+                    "reply": {
+                        "id": f"opt_{i}",
+                        "title": opt[:20]  # WhatsApp limita títulos a 20 caracteres
+                    }
+                }
+                for i, opt in enumerate(options)
+            ]
+            return {
+                "type": "interactive",
+                "interactive": {
+                    "type": "button",
+                    "body": {"text": question["text"]},
+                    "action": {"buttons": buttons}
+                }
+            }
+        # Formato de texto para mais de 3 opções
         letters = [chr(97 + i) for i in range(len(options))]
         return "\n" + "\n".join([f"{letters[i]}) {opt}" for i, opt in enumerate(options)])
 
@@ -248,8 +269,11 @@ class SurveyProcessor:
                 next_question = self.questions[0]
                 save_user_state(self.phone, self.campaign_id, next_question["id"], answers)
                 message_text = next_question["text"]
-                if next_question["type"] in ["quick_reply", "multiple_choice"]:
-                    message_text += self._format_options(next_question)
+                # Verifica se deve usar botões interativos
+                formatted_options = self._format_options(next_question)
+                if isinstance(formatted_options, dict):
+                    return formatted_options  # Retorna payload interativo
+                message_text += formatted_options
                 log_event("Survey started", {"first_question_id": next_question["id"]}, self.survey_type)
                 return {"next_message": message_text}
 
@@ -273,8 +297,11 @@ class SurveyProcessor:
             valid_answer, selected_answer, confirmation_text = self._validate_answer(current_question, message)
             if not valid_answer:
                 message_text = f"❌ Resposta inválida. Escolha uma das opções abaixo:\n{current_question['text']}"
-                if current_question["type"] in ["quick_reply", "multiple_choice"]:
-                    message_text += self._format_options(current_question)
+                formatted_options = self._format_options(current_question)
+                if isinstance(formatted_options, dict):
+                    formatted_options["interactive"]["body"]["text"] = f"❌ Resposta inválida. Escolha uma das opções abaixo:\n{current_question['text']}"
+                    return formatted_options  # Retorna payload interativo
+                message_text += formatted_options
                 log_event("Invalid answer", {
                     "question_id": current_question["id"],
                     "answer": message
@@ -294,8 +321,11 @@ class SurveyProcessor:
             if next_question:
                 save_user_state(self.phone, self.campaign_id, next_question["id"], answers)
                 message_text = f"{confirmation_text}\n\n{next_question['text']}"
-                if next_question["type"] in ["quick_reply", "multiple_choice"]:
-                    message_text += self._format_options(next_question)
+                formatted_options = self._format_options(next_question)
+                if isinstance(formatted_options, dict):
+                    formatted_options["interactive"]["body"]["text"] = f"{confirmation_text}\n\n{next_question['text']}"
+                    return formatted_options  # Retorna payload interativo
+                message_text += formatted_options
                 log_event("Moving to next question", {
                     "from": current_question["id"],
                     "to": next_question["id"]
@@ -307,6 +337,9 @@ class SurveyProcessor:
             final_message = self._safe_json_load(self.campaign.get("questions_json", {})).get(
                 "outro", "Obrigado por participar da pesquisa!"
             )
+            # Usar o campo 'message' da pergunta atual, se disponível
+            if current_question.get("message"):
+                final_message = current_question["message"]
             if self.survey_type == "petition" and current_question.get("message"):
                 final_message = current_question["message"]
                 log_petition_event("Petition completed", {
