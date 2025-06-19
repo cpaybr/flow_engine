@@ -130,30 +130,11 @@ class SurveyProcessor:
             return False
         return True
 
-    def _format_options(self, question: Dict) -> Union[str, Dict]:
-        """Formats question options for display, returning interactive payload for ≤ 3 options or text for > 3."""
+    def _format_options(self, question: Dict) -> str:
+        """Formats question options for display."""
         options = question.get("options", [])
         if not options:
             return ""
-        if len(options) <= 3 and question["type"] in ["quick_reply", "multiple_choice"]:
-            buttons = [
-                {
-                    "type": "reply",
-                    "reply": {
-                        "id": f"opt_{i}",
-                        "title": opt[:20]
-                    }
-                }
-                for i, opt in enumerate(options)
-            ]
-            return {
-                "type": "interactive",
-                "interactive": {
-                    "type": "button",
-                    "body": {"text": question["text"]},
-                    "action": {"buttons": buttons}
-                }
-            }
         letters = [chr(97 + i) for i in range(len(options))]
         return "\n" + "\n".join([f"{letters[i]}) {opt}" for i, opt in enumerate(options)])
 
@@ -204,7 +185,7 @@ class SurveyProcessor:
         return False, "", ""
 
     def _get_next_question(self, current_question: Dict, selected_answer: str) -> Optional[Dict]:
-        """Determines the next question based on the current question and previous answers."""
+        """Determines the next question based on the current question and answer."""
         current_index = next(
             (i for i, q in enumerate(self.questions) if str(q["id"]) == str(current_question["id"])),
             -1
@@ -214,13 +195,14 @@ class SurveyProcessor:
             return None
 
         log_event("Searching for next question", {"current_index": current_index, "current_id": current_question["id"]}, self.survey_type)
+        # Check for conditional questions first
         for i, q in enumerate(self.questions[current_index + 1:], start=current_index + 1):
             log_event("Checking question", {"index": i, "id": q["id"], "type": q["type"], "condition": q.get("condition"), "options": q.get("options")}, self.survey_type)
-            if q.get("condition"):
-                for prev_answer in self.user_state.get("answers", {}).values():
-                    if normalize_text(q["condition"]).lower() == normalize_text(prev_answer).lower():
-                        log_event("Next question found by condition", {"next_id": q["id"], "condition": q["condition"], "matched_answer": prev_answer}, self.survey_type)
-                        return q
+            if q.get("condition") and normalize_text(q["condition"]).lower() == normalize_text(selected_answer).lower():
+                log_event("Next question found by condition", {"next_id": q["id"]}, self.survey_type)
+                return q
+
+        # Fall back to the next non-conditional question
         for i, q in enumerate(self.questions[current_index + 1:], start=current_index + 1):
             log_event("Checking non-conditional question", {"index": i, "id": q["id"], "type": q["type"], "options": q.get("options")}, self.survey_type)
             if not q.get("condition"):
@@ -242,7 +224,7 @@ class SurveyProcessor:
             if not self._validate_campaign():
                 return {"next_message": "Campanha sem perguntas válidas."}
 
-            current_question_id = self.user_state.get("current_question_id")
+            current_step = self.user_state.get("current_step")
             answers = self.user_state.get("answers", {})
 
             # Handle campaign start via code
@@ -259,37 +241,37 @@ class SurveyProcessor:
                 message = "começar"
 
             # Handle survey initiation
-            if not current_question_id or message.lower() in ["participar", "começar", "assinar"]:
-                if answers and current_question_id:
-                    return {"next_message": "Por favor, responda à pergunta atual."}
+            if not current_step or message.lower() in ["participar", "começar", "assinar"]:
                 next_question = self.questions[0]
                 save_user_state(self.phone, self.campaign_id, next_question["id"], answers)
                 message_text = next_question["text"]
-                formatted_options = self._format_options(next_question)
-                if isinstance(formatted_options, dict):
-                    return formatted_options
-                message_text += formatted_options
+                if next_question["type"] in ["quick_reply", "multiple_choice"]:
+                    message_text += self._format_options(next_question)
                 log_event("Survey started", {"first_question_id": next_question["id"]}, self.survey_type)
                 return {"next_message": message_text}
 
             # Find current question
             current_question = next(
-                (q for q in self.questions if str(q["id"]) == str(current_question_id)),
+                (q for q in self.questions if str(q["id"]) == str(current_step)),
                 None
             )
+            if not current_question and answers:
+                ids_respondidas = sorted([int(k) for k in answers.keys()])
+                ultima_id = ids_respondidas[-1]
+                current_question = next(
+                    (q for q in self.questions if int(q["id"]) == ultima_id),
+                    None
+                )
             if not current_question:
-                log_event("Current question not found", {"current_question_id": current_question_id}, self.survey_type)
+                log_event("Current question not found", {"current_step": current_step}, self.survey_type)
                 return {"next_message": "Erro interno: pergunta atual não encontrada."}
 
             # Validate answer
             valid_answer, selected_answer, confirmation_text = self._validate_answer(current_question, message)
             if not valid_answer:
                 message_text = f"❌ Resposta inválida. Escolha uma das opções abaixo:\n{current_question['text']}"
-                formatted_options = self._format_options(current_question)
-                if isinstance(formatted_options, dict):
-                    formatted_options["interactive"]["body"] = {"text": f"❌ Resposta inválida. Escolha uma das opções abaixo:\n{current_question['text']}"}
-                    return formatted_options
-                message_text += formatted_options
+                if current_question["type"] in ["quick_reply", "multiple_choice"]:
+                    message_text += self._format_options(current_question)
                 log_event("Invalid answer", {
                     "question_id": current_question["id"],
                     "answer": message
@@ -309,11 +291,8 @@ class SurveyProcessor:
             if next_question:
                 save_user_state(self.phone, self.campaign_id, next_question["id"], answers)
                 message_text = f"{confirmation_text}\n\n{next_question['text']}"
-                formatted_options = self._format_options(next_question)
-                if isinstance(formatted_options, dict):
-                    formatted_options["interactive"]["body"] = {"text": message_text}
-                    return formatted_options
-                message_text += formatted_options
+                if next_question["type"] in ["quick_reply", "multiple_choice"]:
+                    message_text += self._format_options(next_question)
                 log_event("Moving to next question", {
                     "from": current_question["id"],
                     "to": next_question["id"]
@@ -325,8 +304,6 @@ class SurveyProcessor:
             final_message = self._safe_json_load(self.campaign.get("questions_json", {})).get(
                 "outro", "Obrigado por participar da pesquisa!"
             )
-            if current_question.get("message"):
-                final_message = current_question["message"]
             if self.survey_type == "petition" and current_question.get("message"):
                 final_message = current_question["message"]
                 log_petition_event("Petition completed", {
@@ -334,8 +311,6 @@ class SurveyProcessor:
                     "answers": answers
                 })
             log_event("Survey completed", {"answers": answers}, self.survey_type)
-            if not final_message.strip():
-                final_message = "Obrigado por sua participação!"
             return {"next_message": final_message}
 
         except Exception as e:
@@ -357,6 +332,7 @@ async def process_message(phone: str, campaign_id: str, message: str) -> Dict[st
     return await processor.process(message)
 
 if __name__ == "__main__":
+    # Test the processor
     test_result = asyncio.run(process_message(
         "+5511999999999",
         "test-campaign",
