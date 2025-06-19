@@ -185,7 +185,7 @@ class SurveyProcessor:
         return False, "", ""
 
     def _get_next_question(self, current_question: Dict, selected_answer: str) -> Optional[Dict]:
-        """Determines the next question based on the current question and answer."""
+        """Determines the next question based on the current question and previous answers."""
         current_index = next(
             (i for i, q in enumerate(self.questions) if str(q["id"]) == str(current_question["id"])),
             -1
@@ -198,9 +198,12 @@ class SurveyProcessor:
         # Check for conditional questions first
         for i, q in enumerate(self.questions[current_index + 1:], start=current_index + 1):
             log_event("Checking question", {"index": i, "id": q["id"], "type": q["type"], "condition": q.get("condition"), "options": q.get("options")}, self.survey_type)
-            if q.get("condition") and normalize_text(q["condition"]).lower() == normalize_text(selected_answer).lower():
-                log_event("Next question found by condition", {"next_id": q["id"]}, self.survey_type)
-                return q
+            if q.get("condition"):
+                # Check if the condition matches any previous answer
+                for prev_answer in self.user_state.get("answers", {}).values():
+                    if normalize_text(q["condition"]).lower() == normalize_text(prev_answer).lower():
+                        log_event("Next question found by condition", {"next_id": q["id"], "condition": q["condition"], "matched_answer": prev_answer}, self.survey_type)
+                        return q
 
         # Fall back to the next non-conditional question
         for i, q in enumerate(self.questions[current_index + 1:], start=current_index + 1):
@@ -311,6 +314,9 @@ class SurveyProcessor:
                     "answers": answers
                 })
             log_event("Survey completed", {"answers": answers}, self.survey_type)
+            # Ensure final_message is not empty
+            if not final_message.strip():
+                final_message = "Obrigado por sua participação!"
             return {"next_message": final_message}
 
         except Exception as e:
