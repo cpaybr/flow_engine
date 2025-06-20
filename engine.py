@@ -131,7 +131,7 @@ class SurveyProcessor:
         return True
 
     def _format_options(self, question: Dict) -> str:
-        """Formats question options for display (fallback for non-interactive cases)."""
+        """Formats question options for display."""
         options = question.get("options", [])
         if not options:
             return ""
@@ -173,7 +173,7 @@ class SurveyProcessor:
                 idx = int(option_map[message.lower()].split("_")[1])
                 return True, options[idx], f"✔️ Você escolheu: {options[idx]}"
         elif question_type in ["text", "open_text"]:
-            if "cpf" in question["text"].lower():
+            if "cpf" in question["text"].lower() and self.survey_type == "petition":
                 if not is_valid_cpf(message):
                     log_event("Invalid CPF", {"cpf": message}, self.survey_type)
                     return False, "", "❌ CPF inválido. Por favor, digite um CPF válido com 11 dígitos (apenas números)."
@@ -215,19 +215,11 @@ class SurveyProcessor:
         """Processes an incoming message and returns the next message."""
         try:
             message = normalize_text(message.strip())
-            outro_msg = self._safe_json_load(self.campaign.get("questions_json", {})).get(
-                "outro", "Obrigado por participar da pesquisa!"
-            )
-
-            if self.user_state.get("current_step") == "completed":
-                return {"next_message": outro_msg}
-
             log_event("Processing message", {
                 "phone": self.phone,
                 "campaign_id": self.campaign_id,
                 "message": message
             }, self.survey_type)
-
 
             if not self._validate_campaign():
                 return {"next_message": "Campanha sem perguntas válidas."}
@@ -252,68 +244,11 @@ class SurveyProcessor:
             if not current_step or message.lower() in ["participar", "começar", "assinar"]:
                 next_question = self.questions[0]
                 save_user_state(self.phone, self.campaign_id, next_question["id"], answers)
+                message_text = next_question["text"]
                 if next_question["type"] in ["quick_reply", "multiple_choice"]:
-                    options = next_question.get("options", [])
-                    if len(options) <= 3:
-                        # Use button message for 3 or fewer options
-                        buttons = [
-                            {
-                                "type": "reply",
-                                "reply": {
-                                    "id": f"opt_{i}",
-                                    "title": opt[:20]  # WhatsApp button titles limited to 20 characters
-                                }
-                            }
-                            for i, opt in enumerate(options)
-                        ]
-                        return {
-                            "next_message": {
-                                "type": "interactive",
-                                "interactive": {
-                                    "type": "button",
-                                    "body": {
-                                        "text": next_question["text"]
-                                    },
-                                    "action": {
-                                        "buttons": buttons
-                                    }
-                                }
-                            }
-                        }
-                    else:
-                        # Use list message for more than 3 options
-                        return {
-                            "next_message": {
-                                "type": "interactive",
-                                "interactive": {
-                                    "type": "list",
-                                    "body": {
-                                        "text": next_question["text"]
-                                    },
-                                    "action": {
-                                        "button": "Escolha uma opção",
-                                        "sections": [
-                                            {
-                                                "title": "Opções",
-                                                "rows": [
-                                                    {
-                                                        "id": f"opt_{i}",
-                                                        "title": opt[:24],  # WhatsApp list titles limited to 24 characters
-                                                        "description": ""
-                                                    }
-                                                    for i, opt in enumerate(options)
-                                                ]
-                                            }
-                                        ]
-                                    }
-                                }
-                            }
-                        }
-                else:
-                    # Non-interactive question
-                    message_text = next_question["text"]
-                    log_event("Survey started", {"first_question_id": next_question["id"]}, self.survey_type)
-                    return {"next_message": message_text}
+                    message_text += self._format_options(next_question)
+                log_event("Survey started", {"first_question_id": next_question["id"]}, self.survey_type)
+                return {"next_message": message_text}
 
             # Find current question
             current_question = next(
@@ -334,71 +269,14 @@ class SurveyProcessor:
             # Validate answer
             valid_answer, selected_answer, confirmation_text = self._validate_answer(current_question, message)
             if not valid_answer:
+                message_text = f"❌ Resposta inválida. Escolha uma das opções abaixo:\n{current_question['text']}"
                 if current_question["type"] in ["quick_reply", "multiple_choice"]:
-                    options = current_question.get("options", [])
-                    if len(options) <= 3:
-                        # Return button message for invalid answer
-                        buttons = [
-                            {
-                                "type": "reply",
-                                "reply": {
-                                    "id": f"opt_{i}",
-                                    "title": opt[:20]
-                                }
-                            }
-                            for i, opt in enumerate(options)
-                        ]
-                        return {
-                            "next_message": {
-                                "type": "interactive",
-                                "interactive": {
-                                    "type": "button",
-                                    "body": {
-                                        "text": f"❌ Resposta inválida. Escolha uma das opções abaixo:\n{current_question['text']}"
-                                    },
-                                    "action": {
-                                        "buttons": buttons
-                                    }
-                                }
-                            }
-                        }
-                    else:
-                        # Return list message for invalid answer
-                        return {
-                            "next_message": {
-                                "type": "interactive",
-                                "interactive": {
-                                    "type": "list",
-                                    "body": {
-                                        "text": f"❌ Resposta inválida. Escolha uma das opções abaixo:\n{current_question['text']}"
-                                    },
-                                    "action": {
-                                        "button": "Escolha uma opção",
-                                        "sections": [
-                                            {
-                                                "title": "Opções",
-                                                "rows": [
-                                                    {
-                                                        "id": f"opt_{i}",
-                                                        "title": opt[:24],
-                                                        "description": ""
-                                                    }
-                                                    for i, opt in enumerate(options)
-                                                ]
-                                            }
-                                        ]
-                                    }
-                                }
-                            }
-                        }
-                else:
-                    # Non-interactive invalid answer
-                    message_text = f"❌ Resposta inválida. Por favor, responda novamente:\n{current_question['text']}"
-                    log_event("Invalid answer", {
-                        "question_id": current_question["id"],
-                        "answer": message
-                    }, self.survey_type)
-                    return {"next_message": message_text}
+                    message_text += self._format_options(current_question)
+                log_event("Invalid answer", {
+                    "question_id": current_question["id"],
+                    "answer": message
+                }, self.survey_type)
+                return {"next_message": message_text}
 
             # Save answer
             answers[str(current_question["id"])] = selected_answer
@@ -412,74 +290,17 @@ class SurveyProcessor:
             next_question = self._get_next_question(current_question, selected_answer)
             if next_question:
                 save_user_state(self.phone, self.campaign_id, next_question["id"], answers)
+                message_text = f"{confirmation_text}\n\n{next_question['text']}"
                 if next_question["type"] in ["quick_reply", "multiple_choice"]:
-                    options = next_question.get("options", [])
-                    if len(options) <= 3:
-                        # Use button message for next question
-                        buttons = [
-                            {
-                                "type": "reply",
-                                "reply": {
-                                    "id": f"opt_{i}",
-                                    "title": opt[:20]
-                                }
-                            }
-                            for i, opt in enumerate(options)
-                        ]
-                        return {
-                            "next_message": {
-                                "type": "interactive",
-                                "interactive": {
-                                    "type": "button",
-                                    "body": {
-                                        "text": f"{confirmation_text}\n\n{next_question['text']}"
-                                    },
-                                    "action": {
-                                        "buttons": buttons
-                                    }
-                                }
-                            }
-                        }
-                    else:
-                        # Use list message for next question
-                        return {
-                            "next_message": {
-                                "type": "interactive",
-                                "interactive": {
-                                    "type": "list",
-                                    "body": {
-                                        "text": f"{confirmation_text}\n\n{next_question['text']}"
-                                    },
-                                    "action": {
-                                        "button": "Escolha uma opção",
-                                        "sections": [
-                                            {
-                                                "title": "Opções",
-                                                "rows": [
-                                                    {
-                                                        "id": f"opt_{i}",
-                                                        "title": opt[:24],
-                                                        "description": ""
-                                                    }
-                                                    for i, opt in enumerate(options)
-                                                ]
-                                            }
-                                        ]
-                                    }
-                                }
-                            }
-                        }
-                else:
-                    # Non-interactive next question
-                    message_text = f"{confirmation_text}\n\n{next_question['text']}"
-                    log_event("Moving to next question", {
-                        "from": current_question["id"],
-                        "to": next_question["id"]
-                    }, self.survey_type)
-                    return {"next_message": message_text}
+                    message_text += self._format_options(next_question)
+                log_event("Moving to next question", {
+                    "from": current_question["id"],
+                    "to": next_question["id"]
+                }, self.survey_type)
+                return {"next_message": message_text}
 
             # Survey completion
-save_user_state(self.phone, self.campaign_id, "completed", answers)
+            save_user_state(self.phone, self.campaign_id, None, answers)
             final_message = self._safe_json_load(self.campaign.get("questions_json", {})).get(
                 "outro", "Obrigado por participar da pesquisa!"
             )
