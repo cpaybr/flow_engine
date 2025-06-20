@@ -173,7 +173,7 @@ class SurveyProcessor:
                 idx = int(option_map[message.lower()].split("_")[1])
                 return True, options[idx], f"✔️ Você escolheu: {options[idx]}"
         elif question_type in ["text", "open_text"]:
-            if "cpf" in question["text"].lower() and self.survey_type == "petition":
+            if "cpf" in question["text"].lower():
                 if not is_valid_cpf(message):
                     log_event("Invalid CPF", {"cpf": message}, self.survey_type)
                     return False, "", "❌ CPF inválido. Por favor, digite um CPF válido com 11 dígitos (apenas números)."
@@ -215,11 +215,19 @@ class SurveyProcessor:
         """Processes an incoming message and returns the next message."""
         try:
             message = normalize_text(message.strip())
+            outro_msg = self._safe_json_load(self.campaign.get("questions_json", {})).get(
+                "outro", "Obrigado por participar da pesquisa!"
+            )
+
+            if self.user_state.get("current_step") == "completed":
+                return {"next_message": outro_msg}
+
             log_event("Processing message", {
                 "phone": self.phone,
                 "campaign_id": self.campaign_id,
                 "message": message
             }, self.survey_type)
+
 
             if not self._validate_campaign():
                 return {"next_message": "Campanha sem perguntas válidas."}
@@ -471,7 +479,7 @@ class SurveyProcessor:
                     return {"next_message": message_text}
 
             # Survey completion
-            save_user_state(self.phone, self.campaign_id, None, answers)
+save_user_state(self.phone, self.campaign_id, "completed", answers)
             final_message = self._safe_json_load(self.campaign.get("questions_json", {})).get(
                 "outro", "Obrigado por participar da pesquisa!"
             )
