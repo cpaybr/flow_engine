@@ -115,7 +115,14 @@ class SurveyProcessor:
                 "id": normalize_text(str(q.get("id"))),
                 "text": normalize_text(q.get("text", "")),
                 "type": normalize_text(q.get("type", "text")),
-                "options": [opt.get("text", str(opt)) if isinstance(opt, dict) else normalize_text(opt) for opt in q.get("options", [])],
+                "options": [
+                    {
+                        "text": opt.get("text", str(opt)) if isinstance(opt, dict) else normalize_text(opt),
+                        "action": opt.get("action") if isinstance(opt, dict) else None,
+                        "target": opt.get("target") if isinstance(opt, dict) else None
+                    } if isinstance(opt, dict) else {"text": normalize_text(opt)}
+                    for opt in q.get("options", [])
+                ],
                 "condition": normalize_text(q["condition"]) if "condition" in q else None,
                 "message": normalize_text(q.get("message", "")) if "message" in q else None
             }
@@ -144,7 +151,7 @@ class SurveyProcessor:
                     "type": "reply",
                     "reply": {
                         "id": f"opt_{i}",
-                        "title": opt[:20]  # WhatsApp limits button titles to 20 characters
+                        "title": opt["text"][:20]  # WhatsApp limits button titles to 20 characters
                     }
                 } for i, opt in enumerate(options)
             ]
@@ -156,13 +163,12 @@ class SurveyProcessor:
                 }
             }
         else:
-            # For multiple_choice with >3 options, use a list message
             sections = [{
                 "rows": [
                     {
                         "id": f"opt_{i}",
-                        "title": opt[:24],  # WhatsApp limits list item titles to 24 characters
-                        "description": ""  # Optional description
+                        "title": opt["text"][:24],  # WhatsApp limits list item titles to 24 characters
+                        "description": ""
                     } for i, opt in enumerate(options)
                 ]
             }]
@@ -186,7 +192,7 @@ class SurveyProcessor:
             "question_id": question["id"],
             "question_type": question_type,
             "message": message,
-            "options": options
+            "options": [opt["text"] for opt in options]
         }, self.survey_type)
 
         if not message:
@@ -196,14 +202,14 @@ class SurveyProcessor:
         if question_type in ["quick_reply", "multiple_choice"]:
             letters = [chr(97 + i) for i in range(len(options))]
             numbers = [str(i + 1) for i in range(len(options))]
-            option_map = {opt.lower(): f"opt_{i}" for i, opt in enumerate(options)}
+            option_map = {opt["text"].lower(): f"opt_{i}" for i, opt in enumerate(options)}
 
             if message.startswith("opt_"):
                 try:
                     idx = int(message.split("_")[1])
                     if 0 <= idx < len(options):
-                        log_event("Valid answer found", {"index": idx, "answer": options[idx]}, self.survey_type)
-                        return True, options[idx], f"✔️ Você escolheu: {options[idx]}"
+                        log_event("Valid answer found", {"index": idx, "answer": options[idx]["text"]}, self.survey_type)
+                        return True, options[idx]["text"], f"✔️ Você escolheu: {options[idx]['text']}"
                     else:
                         log_event("Invalid opt index", {"index": idx, "options_length": len(options)}, self.survey_type)
                 except (ValueError, IndexError) as e:
@@ -211,24 +217,24 @@ class SurveyProcessor:
             elif message.lower() in letters:
                 try:
                     idx = letters.index(message.lower())
-                    log_event("Valid answer found by letter", {"letter": message.lower(), "index": idx, "answer": options[idx]}, self.survey_type)
-                    return True, options[idx], f"✔️ Você escolheu: {options[idx]}"
+                    log_event("Valid answer found by letter", {"letter": message.lower(), "index": idx, "answer": options[idx]["text"]}, self.survey_type)
+                    return True, options[idx]["text"], f"✔️ Você escolheu: {options[idx]['text']}"
                 except ValueError as e:
                     log_event("Invalid letter", {"error": str(e), "message": message}, self.survey_type)
             elif message in numbers:
                 try:
                     idx = int(message) - 1
                     if 0 <= idx < len(options):
-                        log_event("Valid answer found by number", {"number": message, "index": idx, "answer": options[idx]}, self.survey_type)
-                        return True, options[idx], f"✔️ Você escolheu: {options[idx]}"
+                        log_event("Valid answer found by number", {"number": message, "index": idx, "answer": options[idx]["text"]}, self.survey_type)
+                        return True, options[idx]["text"], f"✔️ Você escolheu: {options[idx]['text']}"
                     else:
                         log_event("Invalid number index", {"index": idx, "options_length": len(options)}, self.survey_type)
                 except ValueError as e:
                     log_event("Error parsing number", {"error": str(e), "message": message}, self.survey_type)
             elif message.lower() in option_map:
                 idx = int(option_map[message.lower()].split("_")[1])
-                log_event("Valid answer found by text", {"text": message.lower(), "index": idx, "answer": options[idx]}, self.survey_type)
-                return True, options[idx], f"✔️ Você escolheu: {options[idx]}"
+                log_event("Valid answer found by text", {"text": message.lower(), "index": idx, "answer": options[idx]["text"]}, self.survey_type)
+                return True, options[idx]["text"], f"✔️ Você escolheu: {options[idx]['text']}"
             else:
                 log_event("No matching answer", {"message": message, "options_map": option_map}, self.survey_type)
         elif question_type in ["text", "open_text"]:
@@ -258,20 +264,33 @@ class SurveyProcessor:
             log_event("Current question index not found", {"current_id": current_question["id"]}, self.survey_type)
             return None
 
-        log_event("Searching for next question", {"current_index": current_index, "current_id": current_question["id"]}, self.survey_type)
-        # Check for conditional questions first
+        log_event("Searching for next question", {"current_index": current_index, "current_id": current_question["id"], "selected_answer": selected_answer}, self.survey_type)
+
+        # Check if the selected answer has a specific target
+        for opt in current_question.get("options", []):
+            if opt["text"].lower() == normalize_text(selected_answer).lower() and opt.get("target"):
+                target_id = opt["target"]
+                next_question = next(
+                    (q for q in self.questions if str(q["id"]) == str(target_id)),
+                    None
+                )
+                if next_question:
+                    log_event("Next question found by option target", {"next_id": next_question["id"], "target": target_id}, self.survey_type)
+                    return next_question
+                log_event("Target question not found", {"target": target_id}, self.survey_type)
+
+        # Check for conditional questions
         for i, q in enumerate(self.questions[current_index + 1:], start=current_index + 1):
-            log_event("Checking question", {"index": i, "id": q["id"], "type": q["type"], "condition": q.get("condition"), "options": q.get("options")}, self.survey_type)
             if q.get("condition") and normalize_text(q["condition"]).lower() == normalize_text(selected_answer).lower():
-                log_event("Next question found by condition", {"next_id": q["id"]}, self.survey_type)
+                log_event("Next question found by condition", {"next_id": q["id"], "condition": q["condition"]}, self.survey_type)
                 return q
 
         # Fall back to the next non-conditional question
         for i, q in enumerate(self.questions[current_index + 1:], start=current_index + 1):
-            log_event("Checking non-conditional question", {"index": i, "id": q["id"], "type": q["type"], "options": q.get("options")}, self.survey_type)
             if not q.get("condition"):
                 log_event("Next non-conditional question found", {"next_id": q["id"]}, self.survey_type)
                 return q
+
         log_event("No next question found", {}, self.survey_type)
         return None
 
@@ -305,13 +324,17 @@ class SurveyProcessor:
                 self.campaign = campaign
                 self.survey_type = self._determine_survey_type()
                 self.questions = self._load_questions()
-                save_user_state(self.phone, self.campaign_id, None, {})
+                if not save_user_state(self.phone, self.campaign_id, None, {}):
+                    log_event("Failed to reset user state", {"phone": self.phone, "campaign_id": self.campaign_id})
+                    return {"next_message": "⚠️ Erro ao iniciar a pesquisa. Tente novamente."}
                 message = "começar"
 
             # Handle survey initiation
             if not current_step or message.lower() in ["participar", "começar", "assinar"]:
                 next_question = self.questions[0]
-                save_user_state(self.phone, self.campaign_id, next_question["id"], answers)
+                if not save_user_state(self.phone, self.campaign_id, next_question["id"], answers):
+                    log_event("Failed to save initial state", {"phone": self.phone, "campaign_id": self.campaign_id, "step": next_question["id"]})
+                    return {"next_message": "⚠️ Erro ao iniciar a pesquisa. Tente novamente."}
                 if next_question["type"] in ["quick_reply", "multiple_choice"]:
                     return self._format_options(next_question)
                 return {"next_message": next_question["text"]}
@@ -321,13 +344,15 @@ class SurveyProcessor:
                 (q for q in self.questions if str(q["id"]) == str(current_step)),
                 None
             )
-            if not current_question and answers:
-                ids_respondidas = sorted([int(k) for k in answers.keys() if k.isdigit()])
-                ultima_id = str(ids_respondidas[-1]) if ids_respondidas else None
-                current_question = next(
-                    (q for q in self.questions if str(q["id"]) == ultima_id),
-                    None
-                )
+            if not current_question:
+                log_event("Current question not found, checking answers", {"current_step": current_step, "answers": answers}, self.survey_type)
+                if answers:
+                    ids_respondidas = sorted([k for k in answers.keys() if k.isalnum()])
+                    ultima_id = ids_respondidas[-1] if ids_respondidas else None
+                    current_question = next(
+                        (q for q in self.questions if str(q["id"]) == ultima_id),
+                        None
+                    )
             if not current_question:
                 log_event("Current question not found", {"current_step": current_step}, self.survey_type)
                 return {"next_message": "Erro interno: pergunta atual não encontrada."}
@@ -341,37 +366,33 @@ class SurveyProcessor:
                 return {"next_message": message_text}
 
             # Save answer
-            try:
-                answers[str(current_question["id"])] = selected_answer
-                save_user_state(self.phone, self.campaign_id, current_question["id"], answers)
-                log_event("Answer saved", {
+            answers[str(current_question["id"])] = selected_answer
+            if not save_user_state(self.phone, self.campaign_id, current_question["id"], answers):
+                log_event("Failed to save answer", {
                     "question_id": current_question["id"],
                     "answer": selected_answer,
                     "answers": answers
                 }, self.survey_type)
-            except Exception as e:
-                log_event("Error saving answer", {
-                    "error": str(e),
-                    "question_id": current_question["id"],
-                    "answer": selected_answer
-                }, self.survey_type)
                 return {"next_message": "⚠️ Erro ao salvar resposta. Tente novamente."}
+            log_event("Answer saved", {
+                "question_id": current_question["id"],
+                "answer": selected_answer,
+                "answers": answers
+            }, self.survey_type)
 
             # Determine next question
             next_question = self._get_next_question(current_question, selected_answer)
             if next_question:
-                try:
-                    save_user_state(self.phone, self.campaign_id, next_question["id"], answers)
-                    log_event("State updated for next question", {
+                if not save_user_state(self.phone, self.campaign_id, next_question["id"], answers):
+                    log_event("Failed to save next question state", {
                         "next_question_id": next_question["id"],
                         "answers": answers
                     }, self.survey_type)
-                except Exception as e:
-                    log_event("Error saving next question state", {
-                        "error": str(e),
-                        "next_question_id": next_question["id"]
-                    }, self.survey_type)
                     return {"next_message": "⚠️ Erro ao avançar para a próxima pergunta. Tente novamente."}
+                log_event("State updated for next question", {
+                    "next_question_id": next_question["id"],
+                    "answers": answers
+                }, self.survey_type)
                 if next_question["type"] in ["quick_reply", "multiple_choice"]:
                     interactive_payload = self._format_options(next_question)
                     interactive_payload["interactive"]["header"] = {
@@ -385,11 +406,8 @@ class SurveyProcessor:
             if not answers:
                 log_event("Attempted to complete survey with no answers", {}, self.survey_type)
                 return {"next_message": "⚠️ Nenhuma resposta registrada. Por favor, reinicie a pesquisa."}
-            try:
-                save_user_state(self.phone, self.campaign_id, None, answers)
-                log_event("Final state saved", {"answers": answers}, self.survey_type)
-            except Exception as e:
-                log_event("Error saving completion state", {"error": str(e)}, self.survey_type)
+            if not save_user_state(self.phone, self.campaign_id, None, answers):
+                log_event("Failed to save completion state", {"answers": answers}, self.survey_type)
                 return {"next_message": "⚠️ Erro ao finalizar a pesquisa. Tente novamente."}
             final_message = self._safe_json_load(self.campaign.get("questions_json", {})).get(
                 "outro", "Obrigado por participar da pesquisa!"
