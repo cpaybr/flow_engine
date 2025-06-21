@@ -182,6 +182,16 @@ class SurveyProcessor:
         options = question.get("options", [])
         question_type = question["type"]
         message = normalize_text(message.strip())
+        log_event("Validating answer", {
+            "question_id": question["id"],
+            "question_type": question_type,
+            "message": message,
+            "options": options
+        }, self.survey_type)
+
+        if not message:
+            log_event("Empty message received", {"question_id": question["id"]}, self.survey_type)
+            return False, "", "❌ Resposta inválida. Por favor, selecione uma opção."
 
         if question_type in ["quick_reply", "multiple_choice"]:
             letters = [chr(97 + i) for i in range(len(options))]
@@ -192,25 +202,35 @@ class SurveyProcessor:
                 try:
                     idx = int(message.split("_")[1])
                     if 0 <= idx < len(options):
+                        log_event("Valid answer found", {"index": idx, "answer": options[idx]}, self.survey_type)
                         return True, options[idx], f"✔️ Você escolheu: {options[idx]}"
-                except (ValueError, IndexError):
-                    pass
+                    else:
+                        log_event("Invalid opt index", {"index": idx, "options_length": len(options)}, self.survey_type)
+                except (ValueError, IndexError) as e:
+                    log_event("Error parsing opt_", {"error": str(e), "message": message}, self.survey_type)
             elif message.lower() in letters:
                 try:
                     idx = letters.index(message.lower())
+                    log_event("Valid answer found by letter", {"letter": message.lower(), "index": idx, "answer": options[idx]}, self.survey_type)
                     return True, options[idx], f"✔️ Você escolheu: {options[idx]}"
-                except ValueError:
-                    pass
+                except ValueError as e:
+                    log_event("Invalid letter", {"error": str(e), "message": message}, self.survey_type)
             elif message in numbers:
                 try:
                     idx = int(message) - 1
                     if 0 <= idx < len(options):
+                        log_event("Valid answer found by number", {"number": message, "index": idx, "answer": options[idx]}, self.survey_type)
                         return True, options[idx], f"✔️ Você escolheu: {options[idx]}"
-                except ValueError:
-                    pass
+                    else:
+                        log_event("Invalid number index", {"index": idx, "options_length": len(options)}, self.survey_type)
+                except ValueError as e:
+                    log_event("Error parsing number", {"error": str(e), "message": message}, self.survey_type)
             elif message.lower() in option_map:
                 idx = int(option_map[message.lower()].split("_")[1])
+                log_event("Valid answer found by text", {"text": message.lower(), "index": idx, "answer": options[idx]}, self.survey_type)
                 return True, options[idx], f"✔️ Você escolheu: {options[idx]}"
+            else:
+                log_event("No matching answer", {"message": message, "options_map": option_map}, self.survey_type)
         elif question_type in ["text", "open_text"]:
             if "cpf" in question["text"].lower() and self.survey_type == "petition":
                 if not is_valid_cpf(message):
@@ -218,10 +238,15 @@ class SurveyProcessor:
                     return False, "", "❌ CPF inválido. Por favor, digite um CPF válido com 11 dígitos (apenas números)."
                 cpf_limpo = re.sub(r'[^0-9]', '', message)
                 formatted_cpf = f"{cpf_limpo[:3]}.{cpf_limpo[3:6]}.{cpf_limpo[6:9]}-{cpf_limpo[9:]}"
+                log_event("Valid CPF", {"cpf": formatted_cpf}, self.survey_type)
                 return True, cpf_limpo, f"✔️ CPF registrado: {formatted_cpf}"
             if message:
+                log_event("Valid open text answer", {"answer": message}, self.survey_type)
                 return True, message, f"✔️ Resposta registrada: {message}"
-        return False, "", ""
+            else:
+                log_event("Empty open text answer", {}, self.survey_type)
+        log_event("Answer validation failed", {"message": message, "question_type": question_type}, self.survey_type)
+        return False, "", "❌ Resposta inválida. Por favor, selecione uma opção."
 
     def _get_next_question(self, current_question: Dict, selected_answer: str) -> Optional[Dict]:
         """Determines the next question based on the current question and answer."""
@@ -265,6 +290,10 @@ class SurveyProcessor:
 
             current_step = self.user_state.get("current_step")
             answers = self.user_state.get("answers", {})
+            log_event("Current state", {
+                "current_step": current_step,
+                "answers": answers
+            }, self.survey_type)
 
             # Handle campaign start via code
             if message.lower().startswith("começar "):
@@ -312,17 +341,37 @@ class SurveyProcessor:
                 return {"next_message": message_text}
 
             # Save answer
-            answers[str(current_question["id"])] = selected_answer
-            save_user_state(self.phone, self.campaign_id, current_question["id"], answers)
-            log_event("Answer saved", {
-                "question_id": current_question["id"],
-                "answer": selected_answer
-            }, self.survey_type)
+            try:
+                answers[str(current_question["id"])] = selected_answer
+                save_user_state(self.phone, self.campaign_id, current_question["id"], answers)
+                log_event("Answer saved", {
+                    "question_id": current_question["id"],
+                    "answer": selected_answer,
+                    "answers": answers
+                }, self.survey_type)
+            except Exception as e:
+                log_event("Error saving answer", {
+                    "error": str(e),
+                    "question_id": current_question["id"],
+                    "answer": selected_answer
+                }, self.survey_type)
+                return {"next_message": "⚠️ Erro ao salvar resposta. Tente novamente."}
 
             # Determine next question
             next_question = self._get_next_question(current_question, selected_answer)
             if next_question:
-                save_user_state(self.phone, self.campaign_id, next_question["id"], answers)
+                try:
+                    save_user_state(self.phone, self.campaign_id, next_question["id"], answers)
+                    log_event("State updated for next question", {
+                        "next_question_id": next_question["id"],
+                        "answers": answers
+                    }, self.survey_type)
+                except Exception as e:
+                    log_event("Error saving next question state", {
+                        "error": str(e),
+                        "next_question_id": next_question["id"]
+                    }, self.survey_type)
+                    return {"next_message": "⚠️ Erro ao avançar para a próxima pergunta. Tente novamente."}
                 if next_question["type"] in ["quick_reply", "multiple_choice"]:
                     interactive_payload = self._format_options(next_question)
                     interactive_payload["interactive"]["header"] = {
@@ -333,7 +382,15 @@ class SurveyProcessor:
                 return {"next_message": f"{confirmation_text}\n\n{next_question['text']}"}
 
             # Survey completion
-            save_user_state(self.phone, self.campaign_id, None, answers)
+            if not answers:
+                log_event("Attempted to complete survey with no answers", {}, self.survey_type)
+                return {"next_message": "⚠️ Nenhuma resposta registrada. Por favor, reinicie a pesquisa."}
+            try:
+                save_user_state(self.phone, self.campaign_id, None, answers)
+                log_event("Final state saved", {"answers": answers}, self.survey_type)
+            except Exception as e:
+                log_event("Error saving completion state", {"error": str(e)}, self.survey_type)
+                return {"next_message": "⚠️ Erro ao finalizar a pesquisa. Tente novamente."}
             final_message = self._safe_json_load(self.campaign.get("questions_json", {})).get(
                 "outro", "Obrigado por participar da pesquisa!"
             )
