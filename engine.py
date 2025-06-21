@@ -27,10 +27,13 @@ petition_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %
 petition_logger.addHandler(petition_handler)
 petition_logger.setLevel(logging.INFO)
 
-def normalize_text(text: str) -> str:
-    """Normalizes special characters and HTML entities."""
-    if not text:
-        return text
+def normalize_text(text: Any) -> str:
+    """Normalizes special characters and HTML entities, handling non-string inputs."""
+    if text is None:
+        return ""
+    if not isinstance(text, str):
+        logging.warning(f"Non-string input received in normalize_text: {type(text)} - {text}")
+        return str(text) if text else ""
     text = html.unescape(text)
     text = unicodedata.normalize('NFKD', text)
     return text.encode('utf-8', 'ignore').decode('utf-8')
