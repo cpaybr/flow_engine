@@ -132,10 +132,16 @@ def save_user_state(phone: str, campaign_id: str, step: Optional[str], answers: 
         "answers": answers,
     }
     headers = HEADERS.copy()
-    headers["Prefer"] = "resolution=merge-duplicates"
-    params = {
-        "on_conflict": "phone,campaign_id"
-    }
+    # Verificar se o estado existe e usar patch ou post
+    existing_state = get_user_state(phone, campaign_id)
+    if existing_state.get("id"):
+        url += f"/{existing_state['id']}"
+        method = requests.patch
+        headers["Prefer"] = "return=representation"
+    else:
+        headers["Prefer"] = "resolution=merge-duplicates"
+        params = {"on_conflict": "phone,campaign_id"}
+        method = requests.post
     log_petition_event("Tentando salvar estado do usuário no Supabase", {
         "phone": phone,
         "campaign_id": campaign_id,
@@ -143,8 +149,8 @@ def save_user_state(phone: str, campaign_id: str, step: Optional[str], answers: 
         "answers": answers
     })
     try:
-        res = requests.post(url, headers=headers, params=params, json=payload, timeout=10)
-        success = res.status_code in (200, 201)
+        res = method(url, headers=headers, params=params if method == requests.post else {}, json=payload, timeout=10)
+        success = res.status_code in (200, 201, 204)  # 204 pra patch
         log_event("Resultado do salvamento de estado", {
             "phone": phone,
             "campaign_id": campaign_id,

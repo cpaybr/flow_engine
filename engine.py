@@ -27,6 +27,9 @@ petition_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %
 petition_logger.addHandler(petition_handler)
 petition_logger.setLevel(logging.INFO)
 
+# Contador simulado em memória (temporário)
+petition_counts = {}
+
 def normalize_text(text: Any) -> str:
     """Normalizes special characters and HTML entities, handling non-string inputs."""
     if text is None:
@@ -446,10 +449,14 @@ class SurveyProcessor:
             final_message = self._safe_json_load(self.campaign.get("questions_json", {})).get(
                 "outro", "Obrigado por participar da pesquisa!"
             )
-            if self.survey_type == "petition" and current_question.get("message"):
-                final_message = current_question["message"]
+            if self.survey_type == "petition":
+                petition_counts.setdefault(self.campaign_id, 0)
+                petition_counts[self.campaign_id] += 1
+                final_message = final_message.replace("[CONTADOR]", f"{petition_counts[self.campaign_id]} assinaturas coletadas")
                 log_petition_event("Petition completed", {
                     "phone": self.phone,
+                    "campaign_id": self.campaign_id,
+                    "count": petition_counts[self.campaign_id],
                     "answers": answers
                 })
             log_event("Survey completed", {
