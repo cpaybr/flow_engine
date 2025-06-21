@@ -452,7 +452,9 @@ class SurveyProcessor:
             if self.survey_type == "petition":
                 petition_counts.setdefault(self.campaign_id, 0)
                 petition_counts[self.campaign_id] += 1
-                final_message = final_message.replace("[CONTADOR]", str(petition_counts[self.campaign_id]))
+                count = petition_counts[self.campaign_id]
+count_text = "assinatura coletada" if count == 1 else "assinaturas coletadas"
+final_message = final_message.replace("[CONTADOR]", f"{count} {count_text}")
                 log_petition_event("Petition completed", {
                     "phone": self.phone,
                     "campaign_id": self.campaign_id,
