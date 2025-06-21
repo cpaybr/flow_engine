@@ -8,6 +8,9 @@ import logging
 from typing import Dict, Any, Union, Optional
 from supabase_client import get_campaign, get_user_state, save_user_state, get_campaign_by_code
 
+# Contador simulado em memória (temporário)
+petition_counts = {}
+
 # Logging configuration
 logging.basicConfig(
     filename='/home/flow_engine/engine.log',
@@ -446,10 +449,14 @@ class SurveyProcessor:
             final_message = self._safe_json_load(self.campaign.get("questions_json", {})).get(
                 "outro", "Obrigado por participar da pesquisa!"
             )
-            if self.survey_type == "petition" and current_question.get("message"):
-                final_message = current_question["message"]
+            if self.survey_type == "petition":
+                petition_counts.setdefault(self.campaign_id, 0)
+                petition_counts[self.campaign_id] += 1
+                final_message = final_message.replace("[CONTADOR]", f"{petition_counts[self.campaign_id]} assinaturas coletadas")
                 log_petition_event("Petition completed", {
                     "phone": self.phone,
+                    "campaign_id": self.campaign_id,
+                    "count": petition_counts[self.campaign_id],
                     "answers": answers
                 })
             log_event("Survey completed", {
