@@ -115,7 +115,7 @@ class SurveyProcessor:
                 "id": normalize_text(str(q.get("id"))),
                 "text": normalize_text(q.get("text", "")),
                 "type": normalize_text(q.get("type", "text")),
-                "options": [normalize_text(opt) for opt in q.get("options", [])],
+                "options": [opt.get("text", str(opt)) if isinstance(opt, dict) else normalize_text(opt) for opt in q.get("options", [])],
                 "condition": normalize_text(q["condition"]) if "condition" in q else None,
                 "message": normalize_text(q.get("message", "")) if "message" in q else None
             }
@@ -133,13 +133,49 @@ class SurveyProcessor:
             return False
         return True
 
-    def _format_options(self, question: Dict) -> str:
-        """Formats question options for display."""
+    def _format_options(self, question: Dict) -> Dict[str, Any]:
+        """Formats question options for display, returning an interactive payload."""
         options = question.get("options", [])
         if not options:
-            return ""
-        letters = [chr(97 + i) for i in range(len(options))]
-        return "\n" + "\n".join([f"{letters[i]}) {opt}" for i, opt in enumerate(options)])
+            return {"text": ""}
+        if question["type"] == "quick_reply" and len(options) <= 3:
+            buttons = [
+                {
+                    "type": "reply",
+                    "reply": {
+                        "id": f"opt_{i}",
+                        "title": opt[:20]  # WhatsApp limits button titles to 20 characters
+                    }
+                } for i, opt in enumerate(options)
+            ]
+            return {
+                "interactive": {
+                    "type": "button",
+                    "body": {"text": question["text"]},
+                    "action": {"buttons": buttons}
+                }
+            }
+        else:
+            # For multiple_choice with >3 options, use a list message
+            sections = [{
+                "rows": [
+                    {
+                        "id": f"opt_{i}",
+                        "title": opt[:24],  # WhatsApp limits list item titles to 24 characters
+                        "description": ""  # Optional description
+                    } for i, opt in enumerate(options)
+                ]
+            }]
+            return {
+                "interactive": {
+                    "type": "list",
+                    "body": {"text": question["text"]},
+                    "action": {
+                        "button": "Escolha uma opção",
+                        "sections": sections
+                    }
+                }
+            }
 
     def _validate_answer(self, question: Dict, message: str) -> tuple[bool, str, str]:
         """Validates the user's answer and returns (is_valid, selected_answer, confirmation_text)."""
@@ -247,11 +283,9 @@ class SurveyProcessor:
             if not current_step or message.lower() in ["participar", "começar", "assinar"]:
                 next_question = self.questions[0]
                 save_user_state(self.phone, self.campaign_id, next_question["id"], answers)
-                message_text = next_question["text"]
                 if next_question["type"] in ["quick_reply", "multiple_choice"]:
-                    message_text += self._format_options(next_question)
-                log_event("Survey started", {"first_question_id": next_question["id"]}, self.survey_type)
-                return {"next_message": message_text}
+                    return self._format_options(next_question)
+                return {"next_message": next_question["text"]}
 
             # Find current question
             current_question = next(
@@ -259,10 +293,10 @@ class SurveyProcessor:
                 None
             )
             if not current_question and answers:
-                ids_respondidas = sorted([int(k) for k in answers.keys()])
-                ultima_id = ids_respondidas[-1]
+                ids_respondidas = sorted([int(k) for k in answers.keys() if k.isdigit()])
+                ultima_id = str(ids_respondidas[-1]) if ids_respondidas else None
                 current_question = next(
-                    (q for q in self.questions if int(q["id"]) == ultima_id),
+                    (q for q in self.questions if str(q["id"]) == ultima_id),
                     None
                 )
             if not current_question:
@@ -274,11 +308,7 @@ class SurveyProcessor:
             if not valid_answer:
                 message_text = f"❌ Resposta inválida. Escolha uma das opções abaixo:\n{current_question['text']}"
                 if current_question["type"] in ["quick_reply", "multiple_choice"]:
-                    message_text += self._format_options(current_question)
-                log_event("Invalid answer", {
-                    "question_id": current_question["id"],
-                    "answer": message
-                }, self.survey_type)
+                    return self._format_options(current_question)
                 return {"next_message": message_text}
 
             # Save answer
@@ -293,14 +323,14 @@ class SurveyProcessor:
             next_question = self._get_next_question(current_question, selected_answer)
             if next_question:
                 save_user_state(self.phone, self.campaign_id, next_question["id"], answers)
-                message_text = f"{confirmation_text}\n\n{next_question['text']}"
                 if next_question["type"] in ["quick_reply", "multiple_choice"]:
-                    message_text += self._format_options(next_question)
-                log_event("Moving to next question", {
-                    "from": current_question["id"],
-                    "to": next_question["id"]
-                }, self.survey_type)
-                return {"next_message": message_text}
+                    interactive_payload = self._format_options(next_question)
+                    interactive_payload["interactive"]["header"] = {
+                        "type": "text",
+                        "text": confirmation_text
+                    }
+                    return interactive_payload
+                return {"next_message": f"{confirmation_text}\n\n{next_question['text']}"}
 
             # Survey completion
             save_user_state(self.phone, self.campaign_id, None, answers)
