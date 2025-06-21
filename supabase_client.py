@@ -150,6 +150,10 @@ def save_user_state(phone: str, campaign_id: str, step: Optional[str], answers: 
     })
     try:
         res = method(url, headers=headers, params=params if method == requests.post else {}, json=payload, timeout=10)
+        if res.status_code == 409 and existing_state.get("id"):
+            # Tentar atualizar com patch se houver conflito
+            url = f"{SUPABASE_URL}/rest/v1/whatsapp_user_states/{existing_state['id']}"
+            res = requests.patch(url, headers=headers, json=payload, timeout=10)
         success = res.status_code in (200, 201, 204)  # 204 pra patch
         log_event("Resultado do salvamento de estado", {
             "phone": phone,
