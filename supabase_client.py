@@ -50,7 +50,11 @@ def get_campaign(campaign_id: str) -> Optional[Dict]:
             campaign = res.json()[0]
             log_event("Campanha carregada", {"campaign_id": campaign_id, "campaign": campaign})
             return campaign
-        log_event("Campanha não encontrada", {"campaign_id": campaign_id, "status_code": res.status_code, "response": res.text})
+        log_event("Campanha não encontrada", {
+            "campaign_id": campaign_id,
+            "status_code": res.status_code,
+            "response": res.text
+        })
         return None
     except Exception as e:
         log_event("Erro ao carregar campanha", {"campaign_id": campaign_id, "error": str(e)})
@@ -64,7 +68,11 @@ def get_campaign_by_code(code: str) -> Optional[Dict]:
             campaign_id = res.json()[0]['campaign_id']
             log_event("Campanha encontrada por código", {"code": code, "campaign_id": campaign_id})
             return get_campaign(campaign_id)
-        log_event("Código de campanha inválido", {"code": code, "status_code": res.status_code, "response": res.text})
+        log_event("Código de campanha inválido", {
+            "code": code,
+            "status_code": res.status_code,
+            "response": res.text
+        })
         return None
     except Exception as e:
         log_event("Erro ao buscar campanha por código", {"code": code, "error": str(e)})
@@ -76,21 +84,46 @@ def get_user_state(phone: str, campaign_id: str) -> Dict:
         res = requests.get(url, headers=HEADERS, timeout=10)
         if res.status_code == 200 and res.json():
             state = res.json()[0]
-            log_event("Estado do usuário carregado", {"phone": phone, "campaign_id": campaign_id, "state": state})
+            log_event("Estado do usuário carregado", {
+                "phone": phone,
+                "campaign_id": campaign_id,
+                "state": state
+            })
             return state
-        log_event("Nenhum estado encontrado, retornando padrão", {"phone": phone, "campaign_id": campaign_id, "status_code": res.status_code, "response": res.text})
+        log_event("Nenhum estado encontrado, retornando padrão", {
+            "phone": phone,
+            "campaign_id": campaign_id,
+            "status_code": res.status_code,
+            "response": res.text
+        })
         return {"current_step": None, "answers": {}}
     except Exception as e:
-        log_event("Erro ao carregar estado do usuário", {"phone": phone, "campaign_id": campaign_id, "error": str(e)})
+        log_event("Erro ao carregar estado do usuário", {
+            "phone": phone,
+            "campaign_id": campaign_id,
+            "error": str(e)
+        })
         return {"current_step": None, "answers": {}}
 
 def save_user_state(phone: str, campaign_id: str, step: Optional[str], answers: Dict) -> bool:
     url = f"{SUPABASE_URL}/rest/v1/whatsapp_user_states"
-    # Garantir que answers seja um dicionário serializável
+    # Validação do payload
+    if not isinstance(answers, dict):
+        log_event("Erro: answers não é um dicionário", {
+            "phone": phone,
+            "campaign_id": campaign_id,
+            "answers_type": type(answers)
+        })
+        return False
     try:
         json.dumps(answers)
     except TypeError as e:
-        log_event("Erro ao serializar answers", {"phone": phone, "campaign_id": campaign_id, "answers": str(answers), "error": str(e)})
+        log_event("Erro ao serializar answers", {
+            "phone": phone,
+            "campaign_id": campaign_id,
+            "answers": str(answers),
+            "error": str(e)
+        })
         return False
     payload = {
         "phone": phone,
@@ -112,7 +145,7 @@ def save_user_state(phone: str, campaign_id: str, step: Optional[str], answers: 
     try:
         res = requests.post(url, headers=headers, params=params, json=payload, timeout=10)
         success = res.status_code in (200, 201)
-        log_event("Salvando estado do usuário", {
+        log_event("Resultado do salvamento de estado", {
             "phone": phone,
             "campaign_id": campaign_id,
             "step": step,

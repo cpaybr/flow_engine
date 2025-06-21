@@ -264,7 +264,11 @@ class SurveyProcessor:
             log_event("Current question index not found", {"current_id": current_question["id"]}, self.survey_type)
             return None
 
-        log_event("Searching for next question", {"current_index": current_index, "current_id": current_question["id"], "selected_answer": selected_answer}, self.survey_type)
+        log_event("Searching for next question", {
+            "current_index": current_index,
+            "current_id": current_question["id"],
+            "selected_answer": selected_answer
+        }, self.survey_type)
 
         # Check if the selected answer has a specific target
         for opt in current_question.get("options", []):
@@ -275,14 +279,20 @@ class SurveyProcessor:
                     None
                 )
                 if next_question:
-                    log_event("Next question found by option target", {"next_id": next_question["id"], "target": target_id}, self.survey_type)
+                    log_event("Next question found by option target", {
+                        "next_id": next_question["id"],
+                        "target": target_id
+                    }, self.survey_type)
                     return next_question
                 log_event("Target question not found", {"target": target_id}, self.survey_type)
 
         # Check for conditional questions
         for i, q in enumerate(self.questions[current_index + 1:], start=current_index + 1):
             if q.get("condition") and normalize_text(q["condition"]).lower() == normalize_text(selected_answer).lower():
-                log_event("Next question found by condition", {"next_id": q["id"], "condition": q["condition"]}, self.survey_type)
+                log_event("Next question found by condition", {
+                    "next_id": q["id"],
+                    "condition": q["condition"]
+                }, self.survey_type)
                 return q
 
         # Fall back to the next non-conditional question
@@ -325,16 +335,29 @@ class SurveyProcessor:
                 self.survey_type = self._determine_survey_type()
                 self.questions = self._load_questions()
                 if not save_user_state(self.phone, self.campaign_id, None, {}):
-                    log_event("Failed to reset user state", {"phone": self.phone, "campaign_id": self.campaign_id})
+                    log_event("Failed to reset user state", {
+                        "phone": self.phone,
+                        "campaign_id": self.campaign_id
+                    }, self.survey_type)
                     return {"next_message": "⚠️ Erro ao iniciar a pesquisa. Tente novamente."}
                 message = "começar"
 
             # Handle survey initiation
             if not current_step or message.lower() in ["participar", "começar", "assinar"]:
                 next_question = self.questions[0]
+                answers = {}  # Reset answers on start
                 if not save_user_state(self.phone, self.campaign_id, next_question["id"], answers):
-                    log_event("Failed to save initial state", {"phone": self.phone, "campaign_id": self.campaign_id, "step": next_question["id"]})
+                    log_event("Failed to save initial state", {
+                        "phone": self.phone,
+                        "campaign_id": self.campaign_id,
+                        "step": next_question["id"]
+                    }, self.survey_type)
                     return {"next_message": "⚠️ Erro ao iniciar a pesquisa. Tente novamente."}
+                log_event("Survey started", {
+                    "phone": self.phone,
+                    "campaign_id": self.campaign_id,
+                    "first_question_id": next_question["id"]
+                }, self.survey_type)
                 if next_question["type"] in ["quick_reply", "multiple_choice"]:
                     return self._format_options(next_question)
                 return {"next_message": next_question["text"]}
@@ -345,7 +368,10 @@ class SurveyProcessor:
                 None
             )
             if not current_question:
-                log_event("Current question not found, checking answers", {"current_step": current_step, "answers": answers}, self.survey_type)
+                log_event("Current question not found, checking answers", {
+                    "current_step": current_step,
+                    "answers": answers
+                }, self.survey_type)
                 if answers:
                     ids_respondidas = sorted([k for k in answers.keys() if k.isalnum()])
                     ultima_id = ids_respondidas[-1] if ids_respondidas else None
@@ -367,6 +393,11 @@ class SurveyProcessor:
 
             # Save answer
             answers[str(current_question["id"])] = selected_answer
+            log_event("Answer recorded", {
+                "question_id": current_question["id"],
+                "answer": selected_answer,
+                "answers": answers
+            }, self.survey_type)
             if not save_user_state(self.phone, self.campaign_id, current_question["id"], answers):
                 log_event("Failed to save answer", {
                     "question_id": current_question["id"],
@@ -374,10 +405,11 @@ class SurveyProcessor:
                     "answers": answers
                 }, self.survey_type)
                 return {"next_message": "⚠️ Erro ao salvar resposta. Tente novamente."}
-            log_event("Answer saved", {
+            self.user_state = get_user_state(self.phone, self.campaign_id)  # Refresh state
+            log_event("Answer saved and state refreshed", {
                 "question_id": current_question["id"],
                 "answer": selected_answer,
-                "answers": answers
+                "updated_answers": self.user_state.get("answers", {})
             }, self.survey_type)
 
             # Determine next question
@@ -389,9 +421,10 @@ class SurveyProcessor:
                         "answers": answers
                     }, self.survey_type)
                     return {"next_message": "⚠️ Erro ao avançar para a próxima pergunta. Tente novamente."}
+                self.user_state = get_user_state(self.phone, self.campaign_id)  # Refresh state
                 log_event("State updated for next question", {
                     "next_question_id": next_question["id"],
-                    "answers": answers
+                    "answers": self.user_state.get("answers", {})
                 }, self.survey_type)
                 if next_question["type"] in ["quick_reply", "multiple_choice"]:
                     interactive_payload = self._format_options(next_question)
@@ -409,6 +442,7 @@ class SurveyProcessor:
             if not save_user_state(self.phone, self.campaign_id, None, answers):
                 log_event("Failed to save completion state", {"answers": answers}, self.survey_type)
                 return {"next_message": "⚠️ Erro ao finalizar a pesquisa. Tente novamente."}
+            self.user_state = get_user_state(self.phone, self.campaign_id)  # Refresh state
             final_message = self._safe_json_load(self.campaign.get("questions_json", {})).get(
                 "outro", "Obrigado por participar da pesquisa!"
             )
@@ -418,8 +452,16 @@ class SurveyProcessor:
                     "phone": self.phone,
                     "answers": answers
                 })
-            log_event("Survey completed", {"answers": answers}, self.survey_type)
-            return {"next_message": final_message}
+            log_event("Survey completed", {
+                "phone": self.phone,
+                "campaign_id": self.campaign_id,
+                "answers": answers
+            }, self.survey_type)
+            return {
+                "next_message": f"{confirmation_text}\n\n{final_message}",
+                "completed": True,
+                "answers": answers
+            }
 
         except Exception as e:
             log_event("Processing error", {
